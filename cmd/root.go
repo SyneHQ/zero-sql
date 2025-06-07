@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"zero-sql/cli/internal/converter"
+	"github.com/synehq/zero-sql/internal/converter"
 
 	"github.com/spf13/cobra"
 )

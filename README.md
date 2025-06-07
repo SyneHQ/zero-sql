@@ -1,6 +1,8 @@
 # Zero-SQL
 
-A robust CLI tool that converts SQL queries to MongoDB aggregation pipelines.
+A robust go package that converts SQL queries to MongoDB aggregation pipelines.
+
+> Download cli from here <a href='https://github.com/SyneHQ/zero-sql/releases'>Click here</a>
 
 ![ZERO-BANNER](https://c72gdackzgkn7zoa.public.blob.vercel-storage.com/zerosql.png)
 
@@ -32,7 +34,7 @@ go build -o zero-sql build
 ### Using Go Install
 
 ```bash
-go install github.com/synhq/zero-sql@sudo
+go install github.com/synhq/zero-sql
 ```
 
 ## Usage

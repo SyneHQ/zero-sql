@@ -1,4 +1,4 @@
-module zero-sql/cli
+module github.com/synehq/zero-sql
 
 go 1.21
 

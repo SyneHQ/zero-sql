@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"zero-sql/cli/cmd"
+	"github.com/synehq/zero-sql/cmd"
 )
 
 func main() {

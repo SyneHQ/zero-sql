@@ -5,6 +5,7 @@ echo
 
 echo "1. Simple SELECT with WHERE clause:"
 ./zero-sql "SELECT name, age FROM users WHERE age > 18"
+
 echo
 
 echo "2. SELECT with LIKE pattern matching:"

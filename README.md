@@ -332,3 +332,54 @@ zero-sql/
 ```
 
 The converter package is the heart of the application, handling the conversion from SQL Abstract Syntax Trees (AST) to MongoDB aggregation pipelines. 
+
+## Usage
+
+```bash
+# Basic usage
+zero-sql "SELECT name, age FROM users WHERE age > 18"
+
+# With collection information (helps avoid MongoDB namespace errors)
+zero-sql --include-collection "SELECT name, age FROM users WHERE age > 18 LIMIT 5"
+
+# Pretty print JSON output
+zero-sql --pretty "SELECT * FROM products"
+
+# Verbose mode
+zero-sql --verbose "SELECT name FROM users"
+```
+
+## Troubleshooting
+
+### MongoDB Aggregation Namespace Error
+
+If you encounter an error like `(InvalidNamespace) {aggregate: 1} is not valid for '$limit'; a collection is required`, this means that when executing the generated aggregation pipeline in MongoDB, the collection name is not being specified correctly.
+
+**Solution**: Use the `--include-collection` flag to get both the collection name and the pipeline:
+
+```bash
+# This outputs collection name and pipeline
+zero-sql --include-collection "SELECT name FROM users LIMIT 10"
+```
+
+**Output**:
+```json
+{
+  "collection": "users",
+  "pipeline": [
+    {
+      "$limit": 10
+    }
+  ]
+}
+```
+
+Then, in your MongoDB client/driver, use the collection name when executing the aggregation:
+
+```javascript
+// MongoDB shell
+db.users.aggregate([{"$limit": 10}])
+
+// Node.js with MongoDB driver
+await db.collection("users").aggregate([{"$limit": 10}]).toArray()
+``` 

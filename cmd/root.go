@@ -6,15 +6,16 @@ import (
 	"os"
 	"strings"
 
-	"github.com/synehq/zero-sql/internal/converter"
+	"github.com/synehq/zero-sql/pkg/zerosql"
 
 	"github.com/spf13/cobra"
 )
 
 var (
-	outputFormat string
-	prettyPrint  bool
-	verbose      bool
+	outputFormat      string
+	prettyPrint       bool
+	verbose           bool
+	includeCollection bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -39,7 +40,8 @@ Examples:
   zero-sql "SELECT u.name, p.title FROM users u JOIN posts p ON u.id = p.user_id WHERE u.active = true"
   zero-sql "SELECT u.name, p.title, c.name FROM users u JOIN posts p ON u.id = p.user_id JOIN categories c ON p.category_id = c.id"
   zero-sql "SELECT u.name, p.title FROM users u LEFT JOIN posts p ON u.id = p.user_id"
-  zero-sql --format=json --pretty "SELECT COUNT(*) as total FROM orders GROUP BY status"`,
+  zero-sql --format=json --pretty "SELECT COUNT(*) as total FROM orders GROUP BY status"
+  zero-sql --include-collection "SELECT name FROM users LIMIT 10"`,
 	Args: cobra.ExactArgs(1),
 	RunE: runConvert,
 }
@@ -53,6 +55,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&outputFormat, "format", "f", "json", "Output format (json, bson)")
 	rootCmd.Flags().BoolVarP(&prettyPrint, "pretty", "p", true, "Pretty print the output")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
+	rootCmd.Flags().BoolVarP(&includeCollection, "include-collection", "c", false, "Include collection information in the output")
 }
 
 // runConvert is the main execution function for the convert command
@@ -68,18 +71,25 @@ func runConvert(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create converter with options
-	conv := converter.New(&converter.Options{
+	conv := zerosql.New(&zerosql.Options{
 		Verbose: verbose,
 	})
 
-	// Convert SQL to MongoDB pipeline
-	pipeline, err := conv.ConvertSQLToMongo(sqlQuery)
-	if err != nil {
-		return fmt.Errorf("conversion failed: %w", err)
+	if includeCollection {
+		// Convert SQL to MongoDB pipeline with collection info
+		result, err := conv.ConvertSQLToMongoWithCollection(sqlQuery)
+		if err != nil {
+			return fmt.Errorf("conversion failed: %w", err)
+		}
+		return outputResultWithCollection(result)
+	} else {
+		// Convert SQL to MongoDB pipeline
+		pipeline, err := conv.ConvertSQLToMongo(sqlQuery)
+		if err != nil {
+			return fmt.Errorf("conversion failed: %w", err)
+		}
+		return outputResult(pipeline)
 	}
-
-	// Output the result
-	return outputResult(pipeline)
 }
 
 // outputResult formats and outputs the MongoDB pipeline
@@ -118,4 +128,35 @@ func outputBSON(pipeline []map[string]interface{}) error {
 	// For now, BSON output is the same as JSON
 	// In a more robust implementation, this could use the official MongoDB Go driver's BSON package
 	return outputJSON(pipeline)
+}
+
+// outputResultWithCollection formats and outputs the MongoDB pipeline with collection information
+func outputResultWithCollection(result *zerosql.ConversionResult) error {
+	switch strings.ToLower(outputFormat) {
+	case "json":
+		return outputJSONWithCollection(result)
+	case "bson":
+		return outputJSONWithCollection(result) // BSON uses same format for now
+	default:
+		return fmt.Errorf("unsupported output format: %s", outputFormat)
+	}
+}
+
+// outputJSONWithCollection outputs the result with collection information as JSON
+func outputJSONWithCollection(result *zerosql.ConversionResult) error {
+	var output []byte
+	var err error
+
+	if prettyPrint {
+		output, err = json.MarshalIndent(result, "", "  ")
+	} else {
+		output, err = json.Marshal(result)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	fmt.Println(string(output))
+	return nil
 }

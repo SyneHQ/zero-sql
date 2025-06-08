@@ -263,6 +263,68 @@ func TestConverter_ConvertSQLToMongo(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "SELECT with quoted column names",
+			sql:  `SELECT "Name", "Email" FROM users WHERE "Age" > 18 AND "Status" IN ('active', 'pending')`,
+			expected: []map[string]interface{}{
+				{
+					"$match": map[string]interface{}{
+						"$and": []interface{}{
+							map[string]interface{}{
+								"Age": map[string]interface{}{"$gt": int64(18)},
+							},
+							map[string]interface{}{
+								"Status": map[string]interface{}{
+									"$in": []interface{}{"active", "pending"},
+								},
+							},
+						},
+					},
+				},
+				{
+					"$project": map[string]interface{}{
+						"_id":   0,
+						"Name":  "$Name",
+						"Email": "$Email",
+					},
+				},
+			},
+		},
+		{
+			name: "Complex aggregation with quoted columns",
+			sql:  `SELECT "Date", SUM("Amount") AS Total, COUNT(*) AS Count FROM transactions WHERE "Date" BETWEEN '2023-01-01' AND '2023-12-31' GROUP BY "Date" ORDER BY Total DESC LIMIT 10`,
+			expected: []map[string]interface{}{
+				{
+					"$match": map[string]interface{}{
+						"Date": map[string]interface{}{
+							"$gte": "2023-01-01",
+							"$lte": "2023-12-31",
+						},
+					},
+				},
+				{
+					"$group": map[string]interface{}{
+						"Count": map[string]interface{}{
+							"$sum": 1,
+						},
+						"Total": map[string]interface{}{
+							"$sum": "$Amount",
+						},
+						"_id": map[string]interface{}{
+							"Date": "$Date",
+						},
+					},
+				},
+				{
+					"$sort": map[string]interface{}{
+						"Total": -1,
+					},
+				},
+				{
+					"$limit": int64(10),
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {

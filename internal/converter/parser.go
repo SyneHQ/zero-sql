@@ -52,12 +52,22 @@ func (c *Converter) BuildMatchStage(expr sqlparser.Expr) (map[string]interface{}
 
 // buildComparison handles comparison expressions like =, >, <, LIKE, etc.
 func (c *Converter) buildComparison(expr *sqlparser.ComparisonExpr) (map[string]interface{}, error) {
-	col, ok := expr.Left.(*sqlparser.ColName)
-	if !ok {
-		return nil, fmt.Errorf("left side of comparison must be a column")
-	}
+	var colName string
 
-	colName := c.getFullColumnName(col)
+	// Handle different types of left expressions
+	switch leftExpr := expr.Left.(type) {
+	case *sqlparser.ColName:
+		colName = c.getFullColumnName(leftExpr)
+	case *sqlparser.SQLVal:
+		// Handle quoted identifiers that might be parsed as string values
+		if leftExpr.Type == sqlparser.StrVal {
+			colName = string(leftExpr.Val)
+		} else {
+			return nil, fmt.Errorf("comparison must be applied to a column, got SQLVal of type %v", leftExpr.Type)
+		}
+	default:
+		return nil, fmt.Errorf("left side of comparison must be a column, got: %T", expr.Left)
+	}
 
 	// Handle IN and NOT IN separately as they have different value structures
 	if strings.ToUpper(expr.Operator) == "IN" || strings.ToUpper(expr.Operator) == "NOT IN" {
@@ -139,12 +149,22 @@ func (c *Converter) buildLikeExpression(colName string, rightExpr sqlparser.Expr
 
 // buildIsExpression handles IS NULL and IS NOT NULL
 func (c *Converter) buildIsExpression(expr *sqlparser.IsExpr) (map[string]interface{}, error) {
-	col, ok := expr.Expr.(*sqlparser.ColName)
-	if !ok {
-		return nil, fmt.Errorf("IS expression must be applied to a column")
-	}
+	var colName string
 
-	colName := c.getFullColumnName(col)
+	// Handle different types of expressions
+	switch exprType := expr.Expr.(type) {
+	case *sqlparser.ColName:
+		colName = c.getFullColumnName(exprType)
+	case *sqlparser.SQLVal:
+		// Handle quoted identifiers that might be parsed as string values
+		if exprType.Type == sqlparser.StrVal {
+			colName = string(exprType.Val)
+		} else {
+			return nil, fmt.Errorf("IS expression must be applied to a column, got SQLVal of type %v", exprType.Type)
+		}
+	default:
+		return nil, fmt.Errorf("IS expression must be applied to a column, got: %T", expr.Expr)
+	}
 
 	switch expr.Operator {
 	case "is null":
@@ -158,12 +178,22 @@ func (c *Converter) buildIsExpression(expr *sqlparser.IsExpr) (map[string]interf
 
 // buildRangeCondition handles BETWEEN expressions
 func (c *Converter) buildRangeCondition(expr *sqlparser.RangeCond) (map[string]interface{}, error) {
-	col, ok := expr.Left.(*sqlparser.ColName)
-	if !ok {
-		return nil, fmt.Errorf("BETWEEN expression must be applied to a column")
-	}
+	var colName string
 
-	colName := c.getFullColumnName(col)
+	// Handle different types of left expressions
+	switch leftExpr := expr.Left.(type) {
+	case *sqlparser.ColName:
+		colName = c.getFullColumnName(leftExpr)
+	case *sqlparser.SQLVal:
+		// Handle quoted identifiers that might be parsed as string values
+		if leftExpr.Type == sqlparser.StrVal {
+			colName = string(leftExpr.Val)
+		} else {
+			return nil, fmt.Errorf("BETWEEN expression must be applied to a column, got SQLVal of type %v", leftExpr.Type)
+		}
+	default:
+		return nil, fmt.Errorf("BETWEEN expression must be applied to a column, got: %T", expr.Left)
+	}
 
 	fromVal, err := c.extractValue(expr.From)
 	if err != nil {
@@ -242,6 +272,17 @@ func (c *Converter) handleAliasedExpression(expr *sqlparser.AliasedExpr, project
 			outputFieldName = e.Name.String()
 		}
 		project[outputFieldName] = "$" + fieldName
+	case *sqlparser.SQLVal:
+		// Handle quoted identifiers that might be parsed as string values
+		if e.Type == sqlparser.StrVal {
+			fieldName := string(e.Val)
+			if outputFieldName == "" {
+				outputFieldName = fieldName
+			}
+			project[outputFieldName] = "$" + fieldName
+		} else {
+			return fmt.Errorf("unsupported SQLVal type in SELECT: %v", e.Type)
+		}
 	case *sqlparser.FuncExpr:
 		if err := c.handleAggregationFunction(e, outputFieldName, project); err != nil {
 			return err
@@ -302,12 +343,23 @@ func (c *Converter) BuildSortStage(orderBy sqlparser.OrderBy) (map[string]interf
 	sort := make(map[string]interface{})
 
 	for _, order := range orderBy {
-		col, ok := order.Expr.(*sqlparser.ColName)
-		if !ok {
-			return nil, fmt.Errorf("ORDER BY only supports column names")
+		var colName string
+
+		// Handle different types of expressions in ORDER BY
+		switch expr := order.Expr.(type) {
+		case *sqlparser.ColName:
+			colName = c.getFullColumnName(expr)
+		case *sqlparser.SQLVal:
+			// Handle quoted identifiers that might be parsed as string values
+			if expr.Type == sqlparser.StrVal {
+				colName = string(expr.Val)
+			} else {
+				return nil, fmt.Errorf("ORDER BY only supports column names, got SQLVal of type %v", expr.Type)
+			}
+		default:
+			return nil, fmt.Errorf("ORDER BY only supports column names, got: %T", order.Expr)
 		}
 
-		colName := c.getFullColumnName(col)
 		direction := 1 // ASC
 		if order.Direction == "desc" {
 			direction = -1
@@ -328,12 +380,26 @@ func (c *Converter) BuildGroupStage(groupBy sqlparser.GroupBy, selectExprs sqlpa
 	// Handle GROUP BY columns
 	idGroup := group["_id"].(map[string]interface{})
 	for _, expr := range groupBy {
-		col, ok := expr.(*sqlparser.ColName)
-		if !ok {
-			return nil, fmt.Errorf("GROUP BY only supports column names")
+		var colName, fieldName string
+
+		// Handle different types of expressions in GROUP BY
+		switch groupExpr := expr.(type) {
+		case *sqlparser.ColName:
+			colName = c.getFullColumnName(groupExpr)
+			fieldName = groupExpr.Name.String()
+		case *sqlparser.SQLVal:
+			// Handle quoted identifiers that might be parsed as string values
+			if groupExpr.Type == sqlparser.StrVal {
+				colName = string(groupExpr.Val)
+				fieldName = colName
+			} else {
+				return nil, fmt.Errorf("GROUP BY only supports column names, got SQLVal of type %v", groupExpr.Type)
+			}
+		default:
+			return nil, fmt.Errorf("GROUP BY only supports column names, got: %T", expr)
 		}
-		colName := c.getFullColumnName(col)
-		idGroup[col.Name.String()] = "$" + colName
+
+		idGroup[fieldName] = "$" + colName
 	}
 
 	// Handle aggregation functions in SELECT
@@ -401,8 +467,14 @@ func (c *Converter) getFullColumnName(col *sqlparser.ColName) string {
 // getColumnNameFromExpr extracts column name from expression
 func (c *Converter) getColumnNameFromExpr(expr sqlparser.SelectExpr) string {
 	if aliasedExpr, ok := expr.(*sqlparser.AliasedExpr); ok {
-		if col, ok := aliasedExpr.Expr.(*sqlparser.ColName); ok {
-			return c.getFullColumnName(col)
+		switch e := aliasedExpr.Expr.(type) {
+		case *sqlparser.ColName:
+			return c.getFullColumnName(e)
+		case *sqlparser.SQLVal:
+			// Handle quoted identifiers that might be parsed as string values
+			if e.Type == sqlparser.StrVal {
+				return string(e.Val)
+			}
 		}
 	}
 	return ""

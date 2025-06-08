@@ -50,11 +50,11 @@ func (c *Converter) BuildMatchStage(expr sqlparser.Expr) (map[string]interface{}
 	}
 }
 
-// buildComparison handles comparison expressions within the WHERE clause
+// buildComparison handles comparison expressions like =, >, <, LIKE, etc.
 func (c *Converter) buildComparison(expr *sqlparser.ComparisonExpr) (map[string]interface{}, error) {
 	col, ok := expr.Left.(*sqlparser.ColName)
 	if !ok {
-		return nil, fmt.Errorf("left side of comparison must be a column name, got: %T", expr.Left)
+		return nil, fmt.Errorf("left side of comparison must be a column")
 	}
 
 	colName := c.getFullColumnName(col)
@@ -64,9 +64,19 @@ func (c *Converter) buildComparison(expr *sqlparser.ComparisonExpr) (map[string]
 		return c.buildInExpression(colName, expr.Right, expr.Operator)
 	}
 
-	// Handle LIKE and ILIKE separately
-	if strings.ToUpper(expr.Operator) == "LIKE" || strings.ToUpper(expr.Operator) == "ILIKE" {
-		return c.buildLikeExpression(colName, expr.Right, strings.ToUpper(expr.Operator) == "ILIKE")
+	// Handle LIKE - check if it was originally ILIKE
+	if strings.ToUpper(expr.Operator) == "LIKE" {
+		// Extract the pattern to check if this was originally ILIKE
+		val, err := c.extractValue(expr.Right)
+		if err == nil {
+			if pattern, ok := val.(string); ok {
+				// Check if this pattern was originally from an ILIKE operator
+				key := fmt.Sprintf("ilike:%s", pattern)
+				wasIlike := c.ilikeMap != nil && c.ilikeMap[key]
+				return c.buildLikeExpression(colName, expr.Right, wasIlike)
+			}
+		}
+		return c.buildLikeExpression(colName, expr.Right, false)
 	}
 
 	val, err := c.extractValue(expr.Right)

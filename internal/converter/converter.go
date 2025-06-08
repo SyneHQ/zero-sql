@@ -2,6 +2,7 @@ package converter
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/xwb1989/sqlparser"
@@ -14,7 +15,8 @@ type Options struct {
 
 // Converter handles the conversion from SQL to MongoDB aggregation pipelines
 type Converter struct {
-	options *Options
+	options  *Options
+	ilikeMap map[string]bool
 }
 
 // New creates a new converter instance with the given options
@@ -27,13 +29,49 @@ func New(opts *Options) *Converter {
 	}
 }
 
+// preprocessSQL handles SQL syntax that the parser doesn't natively support
+func (c *Converter) preprocessSQL(sqlQuery string) (string, map[string]bool, error) {
+	// Track which LIKE operations should be case-insensitive
+	ilikePositions := make(map[string]bool)
+
+	processedQuery := sqlQuery
+
+	// Find all ILIKE patterns and their values before converting them to LIKE
+	ilikeRegex := regexp.MustCompile(`(?i)\b(\w+)\s+ILIKE\s+('[^']*'|"[^"]*")`)
+	matches := ilikeRegex.FindAllStringSubmatch(sqlQuery, -1)
+
+	// Mark the specific patterns that were ILIKE
+	for _, match := range matches {
+		if len(match) >= 3 {
+			pattern := strings.Trim(match[2], `'"`)
+			key := fmt.Sprintf("ilike:%s", pattern)
+			ilikePositions[key] = true
+		}
+	}
+
+	// Now replace all ILIKE with LIKE
+	ilikeReplaceRegex := regexp.MustCompile(`(?i)\bILIKE\b`)
+	processedQuery = ilikeReplaceRegex.ReplaceAllString(processedQuery, "LIKE")
+
+	return processedQuery, ilikePositions, nil
+}
+
 // ConvertSQLToMongo parses the SQL query and converts it into a MongoDB aggregation pipeline
 func (c *Converter) ConvertSQLToMongo(sqlQuery string) ([]map[string]interface{}, error) {
 	if strings.TrimSpace(sqlQuery) == "" {
 		return nil, fmt.Errorf("SQL query cannot be empty")
 	}
 
-	stmt, err := sqlparser.Parse(sqlQuery)
+	// Preprocess SQL to handle ILIKE and other unsupported syntax
+	processedQuery, ilikeMap, err := c.preprocessSQL(sqlQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to preprocess SQL query: %w", err)
+	}
+
+	// Store ILIKE mapping in converter for later use
+	c.ilikeMap = ilikeMap
+
+	stmt, err := sqlparser.Parse(processedQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse SQL query: %w", err)
 	}
@@ -56,7 +94,16 @@ func (c *Converter) ConvertSQLToMongoWithCollection(sqlQuery string) (string, []
 		return "", nil, fmt.Errorf("SQL query cannot be empty")
 	}
 
-	stmt, err := sqlparser.Parse(sqlQuery)
+	// Preprocess SQL to handle ILIKE and other unsupported syntax
+	processedQuery, ilikeMap, err := c.preprocessSQL(sqlQuery)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to preprocess SQL query: %w", err)
+	}
+
+	// Store ILIKE mapping in converter for later use
+	c.ilikeMap = ilikeMap
+
+	stmt, err := sqlparser.Parse(processedQuery)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to parse SQL query: %w", err)
 	}

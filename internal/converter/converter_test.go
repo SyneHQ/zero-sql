@@ -60,6 +60,26 @@ func TestConverter_ConvertSQLToMongo(t *testing.T) {
 			},
 		},
 		{
+			name: "SELECT with ILIKE operator",
+			sql:  "SELECT name FROM users WHERE email ILIKE '%@GMAIL.COM'",
+			expected: []map[string]interface{}{
+				{
+					"$match": map[string]interface{}{
+						"email": map[string]interface{}{
+							"$regex":   ".*@GMAIL.COM",
+							"$options": "i",
+						},
+					},
+				},
+				{
+					"$project": map[string]interface{}{
+						"_id":  0,
+						"name": "$name",
+					},
+				},
+			},
+		},
+		{
 			name: "SELECT with IN operator",
 			sql:  "SELECT name FROM users WHERE status IN ('active', 'pending')",
 			expected: []map[string]interface{}{

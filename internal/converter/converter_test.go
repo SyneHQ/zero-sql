@@ -174,7 +174,7 @@ func TestConverter_ConvertSQLToMongo(t *testing.T) {
 			expected: []map[string]interface{}{
 				{
 					"$project": map[string]interface{}{
-						"_id":  0,
+						"_id": 0,
 						"date": map[string]interface{}{
 							"$dateToString": map[string]interface{}{
 								"date":   "$created_at",
@@ -191,9 +191,84 @@ func TestConverter_ConvertSQLToMongo(t *testing.T) {
 			expected: []map[string]interface{}{
 				{
 					"$project": map[string]interface{}{
-						"_id":           0,
+						"_id": 0,
 						"rounded_price": map[string]interface{}{
 							"$round": []interface{}{"$price", 2},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "SELECT DISTINCT",
+			sql:  "SELECT DISTINCT category, status FROM products",
+			expected: []map[string]interface{}{
+				{
+					"$group": map[string]interface{}{
+						"_id": map[string]interface{}{
+							"field_0": "$category",
+							"field_1": "$status",
+						},
+					},
+				},
+				{
+					"$project": map[string]interface{}{
+						"_id":      0,
+						"category": "$_id.field_0",
+						"status":   "$_id.field_1",
+					},
+				},
+			},
+		},
+		{
+			name: "SELECT with string functions",
+			sql:  "SELECT UPPER(name), LOWER(email), LENGTH(description) FROM users",
+			expected: []map[string]interface{}{
+				{
+					"$project": map[string]interface{}{
+						"_id": 0,
+						"upper": map[string]interface{}{
+							"$toUpper": "$name",
+						},
+						"lower": map[string]interface{}{
+							"$toLower": "$email",
+						},
+						"length": map[string]interface{}{
+							"$strLenBytes": "$description",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "SELECT with CONCAT function",
+			sql:  "SELECT CONCAT(first_name, ' ', last_name) as full_name FROM users",
+			expected: []map[string]interface{}{
+				{
+					"$project": map[string]interface{}{
+						"_id": 0,
+						"full_name": map[string]interface{}{
+							"$concat": []interface{}{"$first_name", " ", "$last_name"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "SELECT with math functions",
+			sql:  "SELECT ABS(amount), CEIL(price), FLOOR(discount) FROM orders",
+			expected: []map[string]interface{}{
+				{
+					"$project": map[string]interface{}{
+						"_id": 0,
+						"abs": map[string]interface{}{
+							"$abs": "$amount",
+						},
+						"ceil": map[string]interface{}{
+							"$ceil": "$price",
+						},
+						"floor": map[string]interface{}{
+							"$floor": "$discount",
 						},
 					},
 				},

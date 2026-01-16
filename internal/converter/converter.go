@@ -190,19 +190,28 @@ func (c *Converter) buildPipelineWithCollection(selectStmt *sqlparser.Select) (s
 		pipeline = append(pipeline, map[string]interface{}{"$match": matchStage})
 	}
 
-	// Handle GROUP BY clause
-	if len(selectStmt.GroupBy) > 0 {
-		groupStage, err := c.BuildGroupStage(selectStmt.GroupBy, selectStmt.SelectExprs)
+	// Handle DISTINCT clause
+	if strings.ToUpper(strings.TrimSpace(selectStmt.Distinct)) == "DISTINCT" {
+		distinctStage, err := c.buildDistinctStage(selectStmt.SelectExprs)
 		if err != nil {
-			return "", nil, fmt.Errorf("failed to build GROUP BY clause: %w", err)
+			return "", nil, fmt.Errorf("failed to build DISTINCT clause: %w", err)
 		}
-		pipeline = append(pipeline, map[string]interface{}{"$group": groupStage})
+		pipeline = append(pipeline, distinctStage...)
+	} else {
+		// Handle GROUP BY clause (only if not DISTINCT)
+		if len(selectStmt.GroupBy) > 0 {
+			groupStage, err := c.BuildGroupStage(selectStmt.GroupBy, selectStmt.SelectExprs)
+			if err != nil {
+				return "", nil, fmt.Errorf("failed to build GROUP BY clause: %w", err)
+			}
+			pipeline = append(pipeline, map[string]interface{}{"$group": groupStage})
+		}
 	}
 
-	// Handle HAVING clause (after GROUP BY)
+	// Handle HAVING clause (after GROUP BY or DISTINCT)
 	if selectStmt.Having != nil {
-		if len(selectStmt.GroupBy) == 0 {
-			return "", nil, fmt.Errorf("HAVING clause requires GROUP BY")
+		if len(selectStmt.GroupBy) == 0 && strings.ToUpper(strings.TrimSpace(selectStmt.Distinct)) != "DISTINCT" {
+			return "", nil, fmt.Errorf("HAVING clause requires GROUP BY or DISTINCT")
 		}
 		havingStage, err := c.BuildMatchStage(selectStmt.Having.Expr)
 		if err != nil {
@@ -260,6 +269,11 @@ func (c *Converter) needsProjectStage(selectExprs sqlparser.SelectExprs, groupBy
 func (c *Converter) buildProjectStage(selectStmt *sqlparser.Select, fromCollection string) ([]map[string]interface{}, error) {
 	var stages []map[string]interface{}
 
+	// Skip $project stage for DISTINCT queries (they create their own)
+	if strings.ToUpper(strings.TrimSpace(selectStmt.Distinct)) == "DISTINCT" {
+		return stages, nil
+	}
+
 	if len(selectStmt.GroupBy) > 0 && c.needsProjectStage(selectStmt.SelectExprs, selectStmt.GroupBy) {
 		projectStage, err := c.BuildGroupProjectStage(selectStmt.SelectExprs, selectStmt.GroupBy)
 		if err != nil {
@@ -303,6 +317,67 @@ func (c *Converter) buildSortAndLimitStages(selectStmt *sqlparser.Select) ([]map
 		}
 		stages = append(stages, limitStage...)
 	}
+
+	return stages, nil
+}
+
+// buildDistinctStage builds $group and $project stages for DISTINCT queries
+func (c *Converter) buildDistinctStage(selectExprs sqlparser.SelectExprs) ([]map[string]interface{}, error) {
+	var stages []map[string]interface{}
+
+	// Create $group stage that groups by all selected fields
+	group := map[string]interface{}{
+		"_id": make(map[string]interface{}),
+	}
+
+	idGroup := group["_id"].(map[string]interface{})
+
+	for i, selExpr := range selectExprs {
+		fieldName := fmt.Sprintf("field_%d", i)
+
+		switch expr := selExpr.(type) {
+		case *sqlparser.StarExpr:
+			// SELECT DISTINCT * - not supported for DISTINCT
+			return nil, fmt.Errorf("SELECT DISTINCT * is not supported")
+		case *sqlparser.AliasedExpr:
+			// For aliased expressions, we need to handle them properly
+			switch e := expr.Expr.(type) {
+			case *sqlparser.ColName:
+				colName := c.getFullColumnName(e)
+				idGroup[fieldName] = "$" + colName
+			default:
+				return nil, fmt.Errorf("DISTINCT with complex expressions not yet supported: %T", e)
+			}
+		default:
+			return nil, fmt.Errorf("unsupported select expression in DISTINCT: %T", expr)
+		}
+	}
+
+	stages = append(stages, map[string]interface{}{"$group": group})
+
+	// Create $project stage to extract the distinct fields
+	project := make(map[string]interface{})
+
+	for i, selExpr := range selectExprs {
+		fieldName := fmt.Sprintf("field_%d", i)
+
+		switch expr := selExpr.(type) {
+		case *sqlparser.AliasedExpr:
+			outputFieldName := ""
+			if !expr.As.IsEmpty() {
+				outputFieldName = expr.As.String()
+			} else if colName, ok := expr.Expr.(*sqlparser.ColName); ok {
+				outputFieldName = colName.Name.String()
+			}
+
+			if outputFieldName != "" {
+				project[outputFieldName] = "$_id." + fieldName
+			}
+		}
+	}
+
+	project["_id"] = 0
+	stages = append(stages, map[string]interface{}{"$project": project})
 
 	return stages, nil
 }

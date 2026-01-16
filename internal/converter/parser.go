@@ -360,6 +360,48 @@ func (c *Converter) handleTransformationFunction(expr *sqlparser.FuncExpr, alias
 		return c.handleStrftimeFunction(expr, alias, project)
 	case "ROUND":
 		return c.handleRoundFunction(expr, alias, project)
+	// String functions
+	case "UPPER":
+		return c.handleUpperFunction(expr, alias, project)
+	case "LOWER":
+		return c.handleLowerFunction(expr, alias, project)
+	case "CONCAT":
+		return c.handleConcatFunction(expr, alias, project)
+	case "SUBSTR", "SUBSTRING":
+		return c.handleSubstringFunction(expr, alias, project)
+	case "LENGTH", "LEN":
+		return c.handleLengthFunction(expr, alias, project)
+	case "REPLACE":
+		return c.handleReplaceFunction(expr, alias, project)
+	// Math functions
+	case "ABS":
+		return c.handleAbsFunction(expr, alias, project)
+	case "CEIL":
+		return c.handleCeilFunction(expr, alias, project)
+	case "FLOOR":
+		return c.handleFloorFunction(expr, alias, project)
+	case "POWER", "POW":
+		return c.handlePowerFunction(expr, alias, project)
+	case "SQRT":
+		return c.handleSqrtFunction(expr, alias, project)
+	case "MOD":
+		return c.handleModFunction(expr, alias, project)
+	// Date functions
+	case "YEAR":
+		return c.handleYearFunction(expr, alias, project)
+	case "MONTH":
+		return c.handleMonthFunction(expr, alias, project)
+	case "DAY":
+		return c.handleDayFunction(expr, alias, project)
+	case "DATEADD":
+		return c.handleDateAddFunction(expr, alias, project)
+	case "DATEDIFF":
+		return c.handleDateDiffFunction(expr, alias, project)
+	// Conditional functions
+	case "COALESCE":
+		return c.handleCoalesceFunction(expr, alias, project)
+	case "NULLIF":
+		return c.handleNullifFunction(expr, alias, project)
 	default:
 		return fmt.Errorf("unsupported transformation function: %s", funcName)
 	}
@@ -556,6 +598,593 @@ func (c *Converter) convertStrftimeFormat(sqliteFormat string) string {
 	mongoFormat = strings.ReplaceAll(mongoFormat, "%S", "%S")   // Second
 
 	return mongoFormat
+}
+
+// ===== STRING FUNCTIONS =====
+
+// handleUpperFunction handles UPPER(string) -> $toUpper
+func (c *Converter) handleUpperFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 1 {
+		return fmt.Errorf("UPPER function requires exactly 1 argument")
+	}
+
+	innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract expression from UPPER: %w", err)
+	}
+	input, err := c.extractValue(innerExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from UPPER: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$toUpper": input,
+	}
+
+	return nil
+}
+
+// handleLowerFunction handles LOWER(string) -> $toLower
+func (c *Converter) handleLowerFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 1 {
+		return fmt.Errorf("LOWER function requires exactly 1 argument")
+	}
+
+	innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract expression from LOWER: %w", err)
+	}
+	input, err := c.extractValue(innerExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from LOWER: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$toLower": input,
+	}
+
+	return nil
+}
+
+// handleConcatFunction handles CONCAT(str1, str2, ...) -> $concat
+func (c *Converter) handleConcatFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) < 2 {
+		return fmt.Errorf("CONCAT function requires at least 2 arguments")
+	}
+
+	var concatArgs []interface{}
+	for _, arg := range expr.Exprs {
+		innerExpr, err := c.extractExprFromSelectExpr(arg)
+		if err != nil {
+			return fmt.Errorf("failed to extract expression from CONCAT: %w", err)
+		}
+		value, err := c.extractValue(innerExpr)
+		if err != nil {
+			return fmt.Errorf("failed to extract value from CONCAT: %w", err)
+		}
+		concatArgs = append(concatArgs, value)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$concat": concatArgs,
+	}
+
+	return nil
+}
+
+// handleSubstringFunction handles SUBSTR/SUBSTRING(string, start, length) -> $substr
+func (c *Converter) handleSubstringFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) < 2 || len(expr.Exprs) > 3 {
+		return fmt.Errorf("SUBSTR/SUBSTRING function requires 2 or 3 arguments")
+	}
+
+	// Extract string
+	stringExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract string from SUBSTR: %w", err)
+	}
+	input, err := c.extractValue(stringExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract string value from SUBSTR: %w", err)
+	}
+
+	// Extract start position
+	startExpr, err := c.extractExprFromSelectExpr(expr.Exprs[1])
+	if err != nil {
+		return fmt.Errorf("failed to extract start position from SUBSTR: %w", err)
+	}
+	start, err := c.extractValue(startExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract start position value from SUBSTR: %w", err)
+	}
+
+	// Extract length (optional)
+	var length interface{} = 1 // Default length
+	if len(expr.Exprs) == 3 {
+		lengthExpr, err := c.extractExprFromSelectExpr(expr.Exprs[2])
+		if err != nil {
+			return fmt.Errorf("failed to extract length from SUBSTR: %w", err)
+		}
+		length, err = c.extractValue(lengthExpr)
+		if err != nil {
+			return fmt.Errorf("failed to extract length value from SUBSTR: %w", err)
+		}
+	}
+
+	project[alias] = map[string]interface{}{
+		"$substr": []interface{}{input, start, length},
+	}
+
+	return nil
+}
+
+// handleLengthFunction handles LENGTH/LEN(string) -> $strLenBytes
+func (c *Converter) handleLengthFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 1 {
+		return fmt.Errorf("LENGTH/LEN function requires exactly 1 argument")
+	}
+
+	innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract expression from LENGTH: %w", err)
+	}
+	input, err := c.extractValue(innerExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from LENGTH: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$strLenBytes": input,
+	}
+
+	return nil
+}
+
+// handleReplaceFunction handles REPLACE(string, find, replace) -> $replaceAll
+func (c *Converter) handleReplaceFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 3 {
+		return fmt.Errorf("REPLACE function requires exactly 3 arguments")
+	}
+
+	// Extract string
+	stringExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract string from REPLACE: %w", err)
+	}
+	input, err := c.extractValue(stringExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract string value from REPLACE: %w", err)
+	}
+
+	// Extract find string
+	findExpr, err := c.extractExprFromSelectExpr(expr.Exprs[1])
+	if err != nil {
+		return fmt.Errorf("failed to extract find string from REPLACE: %w", err)
+	}
+	find, err := c.extractValue(findExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract find string value from REPLACE: %w", err)
+	}
+
+	// Extract replace string
+	replaceExpr, err := c.extractExprFromSelectExpr(expr.Exprs[2])
+	if err != nil {
+		return fmt.Errorf("failed to extract replace string from REPLACE: %w", err)
+	}
+	replace, err := c.extractValue(replaceExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract replace string value from REPLACE: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$replaceAll": map[string]interface{}{
+			"input":       input,
+			"find":        find,
+			"replacement": replace,
+		},
+	}
+
+	return nil
+}
+
+// ===== MATH FUNCTIONS =====
+
+// handleAbsFunction handles ABS(number) -> $abs
+func (c *Converter) handleAbsFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 1 {
+		return fmt.Errorf("ABS function requires exactly 1 argument")
+	}
+
+	innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract expression from ABS: %w", err)
+	}
+	input, err := c.extractValue(innerExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from ABS: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$abs": input,
+	}
+
+	return nil
+}
+
+// handleCeilFunction handles CEIL(number) -> $ceil
+func (c *Converter) handleCeilFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 1 {
+		return fmt.Errorf("CEIL function requires exactly 1 argument")
+	}
+
+	innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract expression from CEIL: %w", err)
+	}
+	input, err := c.extractValue(innerExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from CEIL: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$ceil": input,
+	}
+
+	return nil
+}
+
+// handleFloorFunction handles FLOOR(number) -> $floor
+func (c *Converter) handleFloorFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 1 {
+		return fmt.Errorf("FLOOR function requires exactly 1 argument")
+	}
+
+	innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract expression from FLOOR: %w", err)
+	}
+	input, err := c.extractValue(innerExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from FLOOR: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$floor": input,
+	}
+
+	return nil
+}
+
+// handlePowerFunction handles POWER/POW(base, exponent) -> $pow
+func (c *Converter) handlePowerFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 2 {
+		return fmt.Errorf("POWER/POW function requires exactly 2 arguments")
+	}
+
+	baseExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract base from POWER: %w", err)
+	}
+	base, err := c.extractValue(baseExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract base value from POWER: %w", err)
+	}
+
+	exponentExpr, err := c.extractExprFromSelectExpr(expr.Exprs[1])
+	if err != nil {
+		return fmt.Errorf("failed to extract exponent from POWER: %w", err)
+	}
+	exponent, err := c.extractValue(exponentExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract exponent value from POWER: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$pow": []interface{}{base, exponent},
+	}
+
+	return nil
+}
+
+// handleSqrtFunction handles SQRT(number) -> $sqrt
+func (c *Converter) handleSqrtFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 1 {
+		return fmt.Errorf("SQRT function requires exactly 1 argument")
+	}
+
+	innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract expression from SQRT: %w", err)
+	}
+	input, err := c.extractValue(innerExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from SQRT: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$sqrt": input,
+	}
+
+	return nil
+}
+
+// handleModFunction handles MOD(dividend, divisor) -> $mod
+func (c *Converter) handleModFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 2 {
+		return fmt.Errorf("MOD function requires exactly 2 arguments")
+	}
+
+	dividendExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract dividend from MOD: %w", err)
+	}
+	dividend, err := c.extractValue(dividendExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract dividend value from MOD: %w", err)
+	}
+
+	divisorExpr, err := c.extractExprFromSelectExpr(expr.Exprs[1])
+	if err != nil {
+		return fmt.Errorf("failed to extract divisor from MOD: %w", err)
+	}
+	divisor, err := c.extractValue(divisorExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract divisor value from MOD: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$mod": []interface{}{dividend, divisor},
+	}
+
+	return nil
+}
+
+// ===== DATE FUNCTIONS =====
+
+// handleYearFunction handles YEAR(date) -> $year
+func (c *Converter) handleYearFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 1 {
+		return fmt.Errorf("YEAR function requires exactly 1 argument")
+	}
+
+	innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract expression from YEAR: %w", err)
+	}
+	input, err := c.extractValue(innerExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from YEAR: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$year": input,
+	}
+
+	return nil
+}
+
+// handleMonthFunction handles MONTH(date) -> $month
+func (c *Converter) handleMonthFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 1 {
+		return fmt.Errorf("MONTH function requires exactly 1 argument")
+	}
+
+	innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract expression from MONTH: %w", err)
+	}
+	input, err := c.extractValue(innerExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from MONTH: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$month": input,
+	}
+
+	return nil
+}
+
+// handleDayFunction handles DAY(date) -> $dayOfMonth
+func (c *Converter) handleDayFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 1 {
+		return fmt.Errorf("DAY function requires exactly 1 argument")
+	}
+
+	innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract expression from DAY: %w", err)
+	}
+	input, err := c.extractValue(innerExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from DAY: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$dayOfMonth": input,
+	}
+
+	return nil
+}
+
+// handleDateAddFunction handles DATEADD(date, interval, unit) -> $dateAdd
+func (c *Converter) handleDateAddFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 3 {
+		return fmt.Errorf("DATEADD function requires exactly 3 arguments: date, interval, unit")
+	}
+
+	// Extract date
+	dateExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract date from DATEADD: %w", err)
+	}
+	date, err := c.extractValue(dateExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract date value from DATEADD: %w", err)
+	}
+
+	// Extract interval
+	intervalExpr, err := c.extractExprFromSelectExpr(expr.Exprs[1])
+	if err != nil {
+		return fmt.Errorf("failed to extract interval from DATEADD: %w", err)
+	}
+	interval, err := c.extractValue(intervalExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract interval value from DATEADD: %w", err)
+	}
+
+	// Extract unit
+	unitExpr, err := c.extractExprFromSelectExpr(expr.Exprs[2])
+	if err != nil {
+		return fmt.Errorf("failed to extract unit from DATEADD: %w", err)
+	}
+	unit, err := c.extractValue(unitExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract unit value from DATEADD: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$dateAdd": map[string]interface{}{
+			"startDate": date,
+			"unit":      unit,
+			"amount":    interval,
+		},
+	}
+
+	return nil
+}
+
+// handleDateDiffFunction handles DATEDIFF(end_date, start_date, unit) -> $dateDiff
+func (c *Converter) handleDateDiffFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 3 {
+		return fmt.Errorf("DATEDIFF function requires exactly 3 arguments: end_date, start_date, unit")
+	}
+
+	// Extract end date
+	endDateExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract end date from DATEDIFF: %w", err)
+	}
+	endDate, err := c.extractValue(endDateExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract end date value from DATEDIFF: %w", err)
+	}
+
+	// Extract start date
+	startDateExpr, err := c.extractExprFromSelectExpr(expr.Exprs[1])
+	if err != nil {
+		return fmt.Errorf("failed to extract start date from DATEDIFF: %w", err)
+	}
+	startDate, err := c.extractValue(startDateExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract start date value from DATEDIFF: %w", err)
+	}
+
+	// Extract unit
+	unitExpr, err := c.extractExprFromSelectExpr(expr.Exprs[2])
+	if err != nil {
+		return fmt.Errorf("failed to extract unit from DATEDIFF: %w", err)
+	}
+	unit, err := c.extractValue(unitExpr)
+	if err != nil {
+		return fmt.Errorf("failed to extract unit value from DATEDIFF: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$dateDiff": map[string]interface{}{
+			"startDate": startDate,
+			"endDate":   endDate,
+			"unit":      unit,
+		},
+	}
+
+	return nil
+}
+
+// ===== CONDITIONAL FUNCTIONS =====
+
+// handleCoalesceFunction handles COALESCE(val1, val2, ...) -> $ifNull with nested $ifNull
+func (c *Converter) handleCoalesceFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) < 1 {
+		return fmt.Errorf("COALESCE function requires at least 1 argument")
+	}
+
+	if len(expr.Exprs) == 1 {
+		// Single argument - just return the value
+		innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+		if err != nil {
+			return fmt.Errorf("failed to extract expression from COALESCE: %w", err)
+		}
+		value, err := c.extractValue(innerExpr)
+		if err != nil {
+			return fmt.Errorf("failed to extract value from COALESCE: %w", err)
+		}
+		project[alias] = value
+		return nil
+	}
+
+	// Build nested $ifNull structure
+	var ifNull interface{}
+
+	// Start from the last argument and work backwards
+	for i := len(expr.Exprs) - 1; i >= 0; i-- {
+		innerExpr, err := c.extractExprFromSelectExpr(expr.Exprs[i])
+		if err != nil {
+			return fmt.Errorf("failed to extract expression from COALESCE: %w", err)
+		}
+		value, err := c.extractValue(innerExpr)
+		if err != nil {
+			return fmt.Errorf("failed to extract value from COALESCE: %w", err)
+		}
+
+		if ifNull == nil {
+			ifNull = value
+		} else {
+			ifNull = map[string]interface{}{
+				"$ifNull": []interface{}{value, ifNull},
+			}
+		}
+	}
+
+	project[alias] = ifNull
+	return nil
+}
+
+// handleNullifFunction handles NULLIF(expr1, expr2) -> $cond
+func (c *Converter) handleNullifFunction(expr *sqlparser.FuncExpr, alias string, project map[string]interface{}) error {
+	if len(expr.Exprs) != 2 {
+		return fmt.Errorf("NULLIF function requires exactly 2 arguments")
+	}
+
+	// Extract expr1
+	expr1, err := c.extractExprFromSelectExpr(expr.Exprs[0])
+	if err != nil {
+		return fmt.Errorf("failed to extract first expression from NULLIF: %w", err)
+	}
+	val1, err := c.extractValue(expr1)
+	if err != nil {
+		return fmt.Errorf("failed to extract first value from NULLIF: %w", err)
+	}
+
+	// Extract expr2
+	expr2, err := c.extractExprFromSelectExpr(expr.Exprs[1])
+	if err != nil {
+		return fmt.Errorf("failed to extract second expression from NULLIF: %w", err)
+	}
+	val2, err := c.extractValue(expr2)
+	if err != nil {
+		return fmt.Errorf("failed to extract second value from NULLIF: %w", err)
+	}
+
+	project[alias] = map[string]interface{}{
+		"$cond": []interface{}{
+			map[string]interface{}{"$eq": []interface{}{val1, val2}},
+			nil,
+			val1,
+		},
+	}
+
+	return nil
 }
 
 // BuildSortStage constructs the $sort stage from ORDER BY clause

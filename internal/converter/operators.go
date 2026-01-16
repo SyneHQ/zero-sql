@@ -33,6 +33,32 @@ var AggregationFunctions = map[string]string{
 var TransformationFunctions = map[string]string{
 	"STRFTIME": "$dateToString",
 	"ROUND":    "$round",
+	// String functions
+	"UPPER":     "$toUpper",
+	"LOWER":     "$toLower",
+	"CONCAT":    "$concat",
+	"SUBSTR":    "$substr",
+	"SUBSTRING": "$substr",
+	"LENGTH":    "$strLenBytes",
+	"LEN":       "$strLenBytes",
+	"REPLACE":   "$replaceAll",
+	// Math functions
+	"ABS":   "$abs",
+	"CEIL":  "$ceil",
+	"FLOOR": "$floor",
+	"POWER": "$pow",
+	"POW":   "$pow",
+	"SQRT":  "$sqrt",
+	"MOD":   "$mod",
+	// Date functions
+	"YEAR":     "$year",
+	"MONTH":    "$month",
+	"DAY":      "$dayOfMonth",
+	"DATEADD":  "$dateAdd",
+	"DATEDIFF": "$dateDiff",
+	// Conditional functions
+	"COALESCE": "$ifNull",
+	"NULLIF":   "$cond",
 }
 
 // ConvertLikePattern converts SQL LIKE pattern to MongoDB regex pattern

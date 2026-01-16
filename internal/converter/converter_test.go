@@ -293,6 +293,39 @@ func TestConverter_ConvertSQLToMongo(t *testing.T) {
 			},
 		},
 		{
+			name: "SELECT with CAST and GROUP BY aliases",
+			sql:  "SELECT CAST(strftime(created_at, '%Y') AS INTEGER) as year, COUNT(*) as count FROM orders GROUP BY year",
+			expected: []map[string]interface{}{
+				{
+					"$group": map[string]interface{}{
+						"_id": map[string]interface{}{
+							"group_0": map[string]interface{}{
+								"$dateToString": map[string]interface{}{
+									"date":   "$created_at",
+									"format": "%Y",
+								},
+							},
+						},
+						"count": map[string]interface{}{
+							"$sum": 1,
+						},
+					},
+				},
+				{
+					"$project": map[string]interface{}{
+						"_id":   0,
+						"count": "$count",
+						"year": map[string]interface{}{
+							"$dateToString": map[string]interface{}{
+								"date":   "$created_at",
+								"format": "%Y",
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			name:    "Invalid SQL",
 			sql:     "INVALID SQL QUERY",
 			wantErr: true,

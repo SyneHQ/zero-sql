@@ -1226,6 +1226,14 @@ func (c *Converter) BuildGroupStage(groupBy sqlparser.GroupBy, selectExprs sqlpa
 		"_id": make(map[string]interface{}),
 	}
 
+	// Build a map of aliases to their expressions from SELECT clause
+	aliasMap := make(map[string]sqlparser.Expr)
+	for _, selExpr := range selectExprs {
+		if aliasedExpr, ok := selExpr.(*sqlparser.AliasedExpr); ok && !aliasedExpr.As.IsEmpty() {
+			aliasMap[aliasedExpr.As.String()] = aliasedExpr.Expr
+		}
+	}
+
 	// Handle GROUP BY columns
 	idGroup := group["_id"].(map[string]interface{})
 	for i, expr := range groupBy {
@@ -1234,7 +1242,20 @@ func (c *Converter) BuildGroupStage(groupBy sqlparser.GroupBy, selectExprs sqlpa
 		case *sqlparser.ColName:
 			colName := c.getFullColumnName(groupExpr)
 			fieldName := groupExpr.Name.String()
-			idGroup[fieldName] = "$" + colName
+
+			// Check if this is an alias from the SELECT clause
+			if aliasedExpr, isAlias := aliasMap[fieldName]; isAlias {
+				// Use the original expression instead of the alias
+				fieldName = fmt.Sprintf("group_%d", i)
+				aliasExpr, err := c.buildFunctionExpression(aliasedExpr.(*sqlparser.FuncExpr))
+				if err != nil {
+					return nil, fmt.Errorf("failed to build GROUP BY alias expression: %w", err)
+				}
+				idGroup[fieldName] = aliasExpr
+			} else {
+				// Regular column reference
+				idGroup[fieldName] = "$" + colName
+			}
 		case *sqlparser.FuncExpr:
 			// Handle function expressions in GROUP BY (like CAST(strftime(...)))
 			// Use generic field name for complex expressions

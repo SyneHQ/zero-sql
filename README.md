@@ -1,5 +1,9 @@
 # Zero-SQL
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/synehq/zero-sql.svg)](https://pkg.go.dev/github.com/synehq/zero-sql)
+[![Go Report Card](https://goreportcard.com/badge/github.com/synehq/zero-sql)](https://goreportcard.com/report/github.com/synehq/zero-sql)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 A comprehensive SQL-to-MongoDB converter that transforms complex SQL queries into MongoDB aggregation pipelines. Supports 25+ SQL functions, advanced analytics, and full query capabilities.
 
 > Download cli from here <a href='https://github.com/SyneHQ/zero-sql/releases'>Click here</a>
@@ -7,6 +11,25 @@ A comprehensive SQL-to-MongoDB converter that transforms complex SQL queries int
 ![ZERO-BANNER](https://c72gdackzgkn7zoa.public.blob.vercel-storage.com/zerosql.png)
 
 **🚀 New: 25+ SQL Functions Supported** - String manipulation, math operations, date functions, and conditional expressions!
+
+## 📦 Installation
+
+### CLI Tool
+
+Download the latest release from [GitHub Releases](https://github.com/SyneHQ/zero-sql/releases).
+
+### Go Package
+
+```bash
+go get github.com/synehq/zero-sql/pkg/zerosql
+```
+
+```go
+import "github.com/synehq/zero-sql/pkg/zerosql"
+
+converter := zerosql.New(nil)
+pipeline, err := converter.ConvertSQLToMongo("SELECT * FROM users WHERE age > 18")
+```
 
 ## Features
 

@@ -53,6 +53,19 @@ func (c *Converter) preprocessSQL(sqlQuery string) (string, map[string]bool, err
 	ilikeReplaceRegex := regexp.MustCompile(`(?i)\bILIKE\b`)
 	processedQuery = ilikeReplaceRegex.ReplaceAllString(processedQuery, "LIKE")
 
+	// Handle CAST expressions - remove CAST() wrapper and keep inner expression
+	// This handles: CAST(expression AS type) -> expression
+	castRegex := regexp.MustCompile(`(?i)\bCAST\s*\(\s*(.+?)\s+AS\s+[^)]+\s*\)`)
+	processedQuery = castRegex.ReplaceAllStringFunc(processedQuery, func(match string) string {
+		// Extract the expression inside CAST()
+		submatch := castRegex.FindStringSubmatch(match)
+		if len(submatch) >= 2 {
+			expression := submatch[1]
+			return strings.TrimSpace(expression)
+		}
+		return match // Return original if parsing fails
+	})
+
 	return processedQuery, ilikePositions, nil
 }
 

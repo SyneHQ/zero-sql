@@ -275,6 +275,24 @@ func TestConverter_ConvertSQLToMongo(t *testing.T) {
 			},
 		},
 		{
+			name: "SELECT with CAST functions",
+			sql:  "SELECT CAST(amount AS INTEGER) as int_amount, CAST(strftime(created_at, '%Y') AS STRING) as year_string FROM orders",
+			expected: []map[string]interface{}{
+				{
+					"$project": map[string]interface{}{
+						"_id": 0,
+						"int_amount": "$amount",
+						"year_string": {
+							"$dateToString": map[string]interface{}{
+								"date":   "$created_at",
+								"format": "%Y",
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			name:    "Invalid SQL",
 			sql:     "INVALID SQL QUERY",
 			wantErr: true,

@@ -1314,28 +1314,33 @@ func (c *Converter) BuildGroupStage(groupBy sqlparser.GroupBy, selectExprs sqlpa
 func (c *Converter) BuildGroupProjectStage(selectExprs sqlparser.SelectExprs, groupBy sqlparser.GroupBy) (map[string]interface{}, error) {
 	project := make(map[string]interface{})
 
-	// Map group field indices to their corresponding SELECT aliases
-	// For now, assume they correspond by position (this is a simplification)
-	groupIndexToAlias := make(map[int]string)
-	groupFuncCount := 0
-	selectFuncCount := 0
-
-	// Count GROUP BY function expressions
-	for _, groupExpr := range groupBy {
-		if _, ok := groupExpr.(*sqlparser.FuncExpr); ok {
-			groupFuncCount++
+	// Build a map of aliases to their expressions from SELECT clause
+	aliasMap := make(map[string]sqlparser.Expr)
+	for _, selExpr := range selectExprs {
+		if aliasedExpr, ok := selExpr.(*sqlparser.AliasedExpr); ok && !aliasedExpr.As.IsEmpty() {
+			aliasMap[aliasedExpr.As.String()] = aliasedExpr.Expr
 		}
 	}
 
-	// Map SELECT function expressions to GROUP BY indices
-	for _, selExpr := range selectExprs {
-		if aliasedExpr, ok := selExpr.(*sqlparser.AliasedExpr); ok {
-			if _, ok := aliasedExpr.Expr.(*sqlparser.FuncExpr); ok {
-				if !aliasedExpr.As.IsEmpty() && selectFuncCount < groupFuncCount {
-					groupIndexToAlias[selectFuncCount] = aliasedExpr.As.String()
-					selectFuncCount++
-				}
+	// Map group field indices to their corresponding aliases
+	// We need to track which aliases were used in GROUP BY and their group field indices
+	groupIndexToAlias := make(map[int]string)
+	groupIndex := 0
+
+	// Process GROUP BY expressions to find aliases
+	for _, groupExpr := range groupBy {
+		switch groupExpr := groupExpr.(type) {
+		case *sqlparser.ColName:
+			fieldName := groupExpr.Name.String()
+			// Check if this is an alias from SELECT
+			if _, isAlias := aliasMap[fieldName]; isAlias {
+				groupIndexToAlias[groupIndex] = fieldName
+				groupIndex++
 			}
+		case *sqlparser.FuncExpr:
+			// Direct function expressions in GROUP BY
+			groupIndexToAlias[groupIndex] = fmt.Sprintf("group_%d", groupIndex)
+			groupIndex++
 		}
 	}
 

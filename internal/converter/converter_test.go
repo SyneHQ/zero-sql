@@ -315,12 +315,7 @@ func TestConverter_ConvertSQLToMongo(t *testing.T) {
 					"$project": map[string]interface{}{
 						"_id":   0,
 						"count": "$count",
-						"year": map[string]interface{}{
-							"$dateToString": map[string]interface{}{
-								"date":   "$created_at",
-								"format": "%Y",
-							},
-						},
+						"year":  "$_id.group_0",
 					},
 				},
 			},

@@ -56,8 +56,8 @@ func (c *Converter) preprocessSQL(sqlQuery string) (string, map[string]bool, err
 	return processedQuery, ilikePositions, nil
 }
 
-// ConvertSQLToMongo parses the SQL query and converts it into a MongoDB aggregation pipeline
-func (c *Converter) ConvertSQLToMongo(sqlQuery string) ([]map[string]interface{}, error) {
+// parseSQL preprocesses and parses the SQL query, returning the SELECT statement
+func (c *Converter) parseSQL(sqlQuery string) (*sqlparser.Select, error) {
 	if strings.TrimSpace(sqlQuery) == "" {
 		return nil, fmt.Errorf("SQL query cannot be empty")
 	}
@@ -85,36 +85,24 @@ func (c *Converter) ConvertSQLToMongo(sqlQuery string) ([]map[string]interface{}
 		fmt.Printf("Parsing SQL statement: %+v\n", selectStmt)
 	}
 
+	return selectStmt, nil
+}
+
+// ConvertSQLToMongo parses the SQL query and converts it into a MongoDB aggregation pipeline
+func (c *Converter) ConvertSQLToMongo(sqlQuery string) ([]map[string]interface{}, error) {
+	selectStmt, err := c.parseSQL(sqlQuery)
+	if err != nil {
+		return nil, err
+	}
+
 	return c.buildPipeline(selectStmt)
 }
 
 // ConvertSQLToMongoWithCollection parses the SQL query and returns both collection name and pipeline
 func (c *Converter) ConvertSQLToMongoWithCollection(sqlQuery string) (string, []map[string]interface{}, error) {
-	if strings.TrimSpace(sqlQuery) == "" {
-		return "", nil, fmt.Errorf("SQL query cannot be empty")
-	}
-
-	// Preprocess SQL to handle ILIKE and other unsupported syntax
-	processedQuery, ilikeMap, err := c.preprocessSQL(sqlQuery)
+	selectStmt, err := c.parseSQL(sqlQuery)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to preprocess SQL query: %w", err)
-	}
-
-	// Store ILIKE mapping in converter for later use
-	c.ilikeMap = ilikeMap
-
-	stmt, err := sqlparser.Parse(processedQuery)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to parse SQL query: %w", err)
-	}
-
-	selectStmt, ok := stmt.(*sqlparser.Select)
-	if !ok {
-		return "", nil, fmt.Errorf("only SELECT statements are supported, got: %T", stmt)
-	}
-
-	if c.options.Verbose {
-		fmt.Printf("Parsing SQL statement: %+v\n", selectStmt)
+		return "", nil, err
 	}
 
 	return c.buildPipelineWithCollection(selectStmt)
@@ -126,25 +114,24 @@ func (c *Converter) buildPipeline(selectStmt *sqlparser.Select) ([]map[string]in
 	return pipeline, err
 }
 
-// buildPipelineWithCollection constructs the MongoDB aggregation pipeline and returns collection name
-func (c *Converter) buildPipelineWithCollection(selectStmt *sqlparser.Select) (string, []map[string]interface{}, error) {
-	var pipeline []map[string]interface{}
-	var fromCollection string
-
-	// Handle FROM clause
-	if len(selectStmt.From) == 0 {
+// buildFromClause extracts the collection name and builds JOIN stages from the FROM clause
+func (c *Converter) buildFromClause(from []sqlparser.TableExpr) (string, []map[string]interface{}, error) {
+	if len(from) == 0 {
 		return "", nil, fmt.Errorf("FROM clause is required")
 	}
 
+	var pipeline []map[string]interface{}
+	var fromCollection string
+
 	// Handle different types of FROM expressions
-	switch fromExpr := selectStmt.From[0].(type) {
+	switch fromExpr := from[0].(type) {
 	case *sqlparser.AliasedTableExpr:
 		// Simple table reference: FROM table
 		fromCollection = sqlparser.String(fromExpr.Expr)
 
 		// Handle additional JOINs
-		if len(selectStmt.From) > 1 {
-			joinStages, err := c.buildJoinStages(selectStmt.From[1:])
+		if len(from) > 1 {
+			joinStages, err := c.buildJoinStages(from[1:])
 			if err != nil {
 				return "", nil, fmt.Errorf("failed to build JOIN stages: %w", err)
 			}
@@ -169,8 +156,8 @@ func (c *Converter) buildPipelineWithCollection(selectStmt *sqlparser.Select) (s
 		}
 
 		// Handle additional JOINs
-		if len(selectStmt.From) > 1 {
-			additionalJoins, err := c.buildJoinStages(selectStmt.From[1:])
+		if len(from) > 1 {
+			additionalJoins, err := c.buildJoinStages(from[1:])
 			if err != nil {
 				return "", nil, fmt.Errorf("failed to build additional JOIN stages: %w", err)
 			}
@@ -179,6 +166,20 @@ func (c *Converter) buildPipelineWithCollection(selectStmt *sqlparser.Select) (s
 	default:
 		return "", nil, fmt.Errorf("unsupported FROM clause format: %T", fromExpr)
 	}
+
+	return fromCollection, pipeline, nil
+}
+
+// buildPipelineWithCollection constructs the MongoDB aggregation pipeline and returns collection name
+func (c *Converter) buildPipelineWithCollection(selectStmt *sqlparser.Select) (string, []map[string]interface{}, error) {
+	var pipeline []map[string]interface{}
+
+	// Handle FROM clause
+	fromCollection, joinStages, err := c.buildFromClause(selectStmt.From)
+	if err != nil {
+		return "", nil, err
+	}
+	pipeline = append(pipeline, joinStages...)
 
 	// Handle WHERE clause using $match
 	if selectStmt.Where != nil {
@@ -210,36 +211,100 @@ func (c *Converter) buildPipelineWithCollection(selectStmt *sqlparser.Select) (s
 		pipeline = append(pipeline, map[string]interface{}{"$match": havingStage})
 	}
 
-	// Handle SELECT columns using $project (only if not using GROUP BY)
-	if len(selectStmt.GroupBy) == 0 {
-		projectStage, err := c.BuildProjectStage(selectStmt.SelectExprs, fromCollection)
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to build SELECT clause: %w", err)
-		}
-		if len(projectStage) > 0 {
-			pipeline = append(pipeline, map[string]interface{}{"$project": projectStage})
+	// Handle SELECT columns using $project
+	projectStages, err := c.buildProjectStage(selectStmt, fromCollection)
+	if err != nil {
+		return "", nil, err
+	}
+	pipeline = append(pipeline, projectStages...)
+
+	// Handle ORDER BY and LIMIT clauses
+	sortLimitStages, err := c.buildSortAndLimitStages(selectStmt)
+	if err != nil {
+		return "", nil, err
+	}
+	pipeline = append(pipeline, sortLimitStages...)
+
+	return fromCollection, pipeline, nil
+}
+
+// needsProjectStage determines if a $project stage is needed based on the query structure
+func (c *Converter) needsProjectStage(selectExprs sqlparser.SelectExprs, groupBy sqlparser.GroupBy) bool {
+	if len(groupBy) == 0 {
+		return true // Non-GROUP BY queries always need $project
+	}
+
+	// Check if there are transformation functions in SELECT
+	for _, selExpr := range selectExprs {
+		if aliasedExpr, ok := selExpr.(*sqlparser.AliasedExpr); ok {
+			if funcExpr, ok := aliasedExpr.Expr.(*sqlparser.FuncExpr); ok {
+				funcName := strings.ToUpper(funcExpr.Name.String())
+				if _, isTransformFunc := TransformationFunctions[funcName]; isTransformFunc {
+					return true
+				}
+			}
 		}
 	}
+
+	// Check if there are function expressions in GROUP BY
+	for _, groupExpr := range groupBy {
+		if _, ok := groupExpr.(*sqlparser.FuncExpr); ok {
+			return true
+		}
+	}
+
+	return false // Simple GROUP BY queries don't need $project
+}
+
+// buildProjectStage builds the appropriate $project stage based on query structure
+func (c *Converter) buildProjectStage(selectStmt *sqlparser.Select, fromCollection string) ([]map[string]interface{}, error) {
+	var stages []map[string]interface{}
+
+	if len(selectStmt.GroupBy) > 0 && c.needsProjectStage(selectStmt.SelectExprs, selectStmt.GroupBy) {
+		projectStage, err := c.BuildGroupProjectStage(selectStmt.SelectExprs, selectStmt.GroupBy)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build GROUP BY SELECT clause: %w", err)
+		}
+		if len(projectStage) > 0 {
+			stages = append(stages, map[string]interface{}{"$project": projectStage})
+		}
+	} else if len(selectStmt.GroupBy) == 0 {
+		// For non-GROUP BY queries, use the regular project stage
+		projectStage, err := c.BuildProjectStage(selectStmt.SelectExprs, fromCollection)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build SELECT clause: %w", err)
+		}
+		if len(projectStage) > 0 {
+			stages = append(stages, map[string]interface{}{"$project": projectStage})
+		}
+	}
+
+	return stages, nil
+}
+
+// buildSortAndLimitStages builds $sort and $limit/$skip stages from ORDER BY and LIMIT clauses
+func (c *Converter) buildSortAndLimitStages(selectStmt *sqlparser.Select) ([]map[string]interface{}, error) {
+	var stages []map[string]interface{}
 
 	// Handle ORDER BY clause using $sort
 	if len(selectStmt.OrderBy) > 0 {
 		sortStage, err := c.BuildSortStage(selectStmt.OrderBy)
 		if err != nil {
-			return "", nil, fmt.Errorf("failed to build ORDER BY clause: %w", err)
+			return nil, fmt.Errorf("failed to build ORDER BY clause: %w", err)
 		}
-		pipeline = append(pipeline, map[string]interface{}{"$sort": sortStage})
+		stages = append(stages, map[string]interface{}{"$sort": sortStage})
 	}
 
 	// Handle LIMIT clause using $limit
 	if selectStmt.Limit != nil {
 		limitStage, err := c.buildLimitStage(selectStmt.Limit)
 		if err != nil {
-			return "", nil, fmt.Errorf("failed to build LIMIT clause: %w", err)
+			return nil, fmt.Errorf("failed to build LIMIT clause: %w", err)
 		}
-		pipeline = append(pipeline, limitStage...)
+		stages = append(stages, limitStage...)
 	}
 
-	return fromCollection, pipeline, nil
+	return stages, nil
 }
 
 // buildSingleJoin constructs $lookup and $unwind stages for a single JOIN

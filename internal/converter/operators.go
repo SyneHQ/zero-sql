@@ -29,6 +29,12 @@ var AggregationFunctions = map[string]string{
 	"MAX":   "$max",
 }
 
+// TransformationFunctions maps SQL transformation functions to MongoDB equivalents
+var TransformationFunctions = map[string]string{
+	"STRFTIME": "$dateToString",
+	"ROUND":    "$round",
+}
+
 // ConvertLikePattern converts SQL LIKE pattern to MongoDB regex pattern
 func ConvertLikePattern(pattern string, caseInsensitive bool) map[string]interface{} {
 	// Convert SQL wildcards to regex
@@ -81,4 +87,15 @@ func ConvertAggregationFunction(sqlFunc string) (string, error) {
 	}
 
 	return "", fmt.Errorf("unsupported aggregation function: %s", sqlFunc)
+}
+
+// ConvertTransformationFunction converts a SQL transformation function to MongoDB equivalent
+func ConvertTransformationFunction(sqlFunc string) (string, error) {
+	upperFunc := strings.ToUpper(sqlFunc)
+
+	if mongoFunc, exists := TransformationFunctions[upperFunc]; exists {
+		return mongoFunc, nil
+	}
+
+	return "", fmt.Errorf("unsupported transformation function: %s", sqlFunc)
 }

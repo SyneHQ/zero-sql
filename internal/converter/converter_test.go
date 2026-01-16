@@ -169,6 +169,37 @@ func TestConverter_ConvertSQLToMongo(t *testing.T) {
 			},
 		},
 		{
+			name: "SELECT with STRFTIME function",
+			sql:  "SELECT strftime(created_at, '%Y-%m-%d') as date FROM orders",
+			expected: []map[string]interface{}{
+				{
+					"$project": map[string]interface{}{
+						"_id":  0,
+						"date": map[string]interface{}{
+							"$dateToString": map[string]interface{}{
+								"date":   "$created_at",
+								"format": "%Y-%m-%d",
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "SELECT with ROUND function",
+			sql:  "SELECT ROUND(price, 2) as rounded_price FROM products",
+			expected: []map[string]interface{}{
+				{
+					"$project": map[string]interface{}{
+						"_id":           0,
+						"rounded_price": map[string]interface{}{
+							"$round": []interface{}{"$price", 2},
+						},
+					},
+				},
+			},
+		},
+		{
 			name:    "Invalid SQL",
 			sql:     "INVALID SQL QUERY",
 			wantErr: true,

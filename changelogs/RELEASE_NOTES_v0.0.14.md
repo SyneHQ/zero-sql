@@ -1,10 +1,10 @@
-# Zero-SQL v0.0.15 Release Notes
+# Zero-SQL v0.0.14 Release Notes
 
 ## 🚀 Major Feature Expansion: 25+ SQL Functions & Advanced Analytics
 
 **Release Date:** [Release Date]
 
-Zero-SQL v0.0.15 introduces a massive expansion of SQL function support, transforming it from a basic SQL-to-MongoDB converter into a comprehensive analytics and data transformation engine! 🎉
+Zero-SQL v0.0.14 introduces a massive expansion of SQL function support, transforming it from a basic SQL-to-MongoDB converter into a comprehensive analytics and data transformation engine! 🎉
 
 ## 🎯 New Features
 
@@ -107,12 +107,12 @@ zero-sql "SELECT DISTINCT category, status FROM products ORDER BY category"
 
 ## 📈 Impact & Capabilities
 
-### Before v0.0.15
+### Before v0.0.14
 - ~12 basic SQL features
 - Simple aggregation functions only
 - Limited data transformation capabilities
 
-### After v0.0.15
+### After v0.0.14
 - **40+ SQL features** (3x increase!)
 - **25+ SQL functions** across 4 categories
 - **Advanced analytics** with complex expressions
@@ -150,7 +150,7 @@ Existing queries now benefit from improved performance and the ability to use th
 
 ---
 
-**Full Changelog**: https://github.com/synehq/zero-sql/compare/v0.0.14...v0.0.15
+**Full Changelog**: https://github.com/synehq/zero-sql/compare/v0.0.14...v0.0.14
 
 **Documentation**: Updated README.md with comprehensive examples and feature documentation
 

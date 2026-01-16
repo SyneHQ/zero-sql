@@ -32,6 +32,9 @@ Zero-SQL v0.0.14 introduces a massive expansion of SQL function support, transfo
 - **DATEDIFF(end_date, start_date, unit)** → `$dateDiff` - Calculate date difference
 - **STRFTIME(date, format)** → `$dateToString` - Format date using strftime patterns
 
+### Type Conversion Functions (1 new function)
+- **CAST(expression AS type)** → Expression - Type conversion (preprocessed to remove CAST wrapper)
+
 ### Conditional Functions (3 new functions)
 - **COALESCE(val1, val2, ...)** → `$ifNull` - Return first non-null value
 - **NULLIF(expr1, expr2)** → `$cond` - Return null if expressions are equal
@@ -93,6 +96,11 @@ LIMIT 20
 ### String Manipulation
 ```bash
 zero-sql "SELECT UPPER(name), CONCAT(first_name, ' ', last_name) as full_name FROM users"
+```
+
+### Type Conversion
+```bash
+zero-sql "SELECT CAST(amount AS INTEGER) as int_amount, CAST(strftime(created_at, '%Y') AS STRING) as year FROM orders"
 ```
 
 ### Date Analytics

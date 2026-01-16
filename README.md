@@ -51,10 +51,12 @@ Zero-SQL supports a comprehensive set of SQL features:
 - **DATEDIFF(end_date, start_date, unit)** - Calculate date difference
 - **STRFTIME(date, format)** - Format date using strftime patterns
 
+### Type Conversion Functions
+- **CAST(expression AS type)** - Type conversion (preprocessed to remove CAST wrapper)
+
 ### Conditional Functions
 - **COALESCE(val1, val2, ...)** - Return first non-null value
 - **NULLIF(expr1, expr2)** - Return null if expressions are equal
-- **ROUND(value, decimals)** - Round numeric values
 
 ## Installation
 
@@ -431,6 +433,13 @@ zero-sql "SELECT DATEADD(created_at, 30, 'day') as due_date FROM invoices"
 
 # Date formatting with STRFTIME
 zero-sql "SELECT STRFTIME(created_at, '%Y-%m-%d') as date_formatted FROM orders"
+```
+
+#### Type Conversion Functions
+
+```bash
+# Type casting (CAST expressions are preprocessed)
+zero-sql "SELECT CAST(amount AS INTEGER) as int_amount, CAST(price AS STRING) as price_str FROM products"
 ```
 
 #### Conditional Functions

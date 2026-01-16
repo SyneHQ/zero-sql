@@ -33,6 +33,7 @@ var AggregationFunctions = map[string]string{
 var TransformationFunctions = map[string]string{
 	"STRFTIME": "$dateToString",
 	"ROUND":    "$round",
+	"UNNEST":   "$unwind", // Array expansion function
 	// String functions
 	"UPPER":     "$toUpper",
 	"LOWER":     "$toLower",

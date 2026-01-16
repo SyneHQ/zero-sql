@@ -13,10 +13,17 @@ type Options struct {
 	Verbose bool
 }
 
+// CTE represents a Common Table Expression
+type CTE struct {
+	Name  string
+	Query string
+}
+
 // Converter handles the conversion from SQL to MongoDB aggregation pipelines
 type Converter struct {
 	options  *Options
 	ilikeMap map[string]bool
+	ctes     []CTE // Common Table Expressions from WITH clause
 }
 
 // New creates a new converter instance with the given options
@@ -35,6 +42,12 @@ func (c *Converter) preprocessSQL(sqlQuery string) (string, map[string]bool, err
 	ilikePositions := make(map[string]bool)
 
 	processedQuery := sqlQuery
+
+	// Handle WITH clauses (Common Table Expressions)
+	processedQuery, err := c.preprocessWITHClauses(processedQuery)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to preprocess WITH clauses: %w", err)
+	}
 
 	// Find all ILIKE patterns and their values before converting them to LIKE
 	ilikeRegex := regexp.MustCompile(`(?i)\b(\w+)\s+ILIKE\s+('[^']*'|"[^"]*")`)
@@ -66,7 +79,79 @@ func (c *Converter) preprocessSQL(sqlQuery string) (string, map[string]bool, err
 		return match // Return original if parsing fails
 	})
 
+	// Handle PostgreSQL type casting syntax: expr::TYPE -> expr
+	postgresCastRegex := regexp.MustCompile(`::\w+`)
+	processedQuery = postgresCastRegex.ReplaceAllString(processedQuery, "")
+
+	// UNNEST function calls are left as-is for special handling during CTE processing
+
 	return processedQuery, ilikePositions, nil
+}
+
+// preprocessWITHClauses extracts and processes WITH clauses (Common Table Expressions)
+func (c *Converter) preprocessWITHClauses(sqlQuery string) (string, error) {
+	// Check if query starts with WITH
+	withRegex := regexp.MustCompile(`(?i)^\s*WITH\s+`)
+	if !withRegex.MatchString(sqlQuery) {
+		return sqlQuery, nil // No WITH clause, return as-is
+	}
+
+	if c.options.Verbose {
+		fmt.Printf("WITH clause detected in query\n")
+	}
+
+	// Parse CTEs manually by finding AS keywords and matching parentheses
+	c.ctes = c.parseCTEs(sqlQuery)
+
+	if c.options.Verbose {
+		fmt.Printf("Found %d CTEs\n", len(c.ctes))
+		for _, cte := range c.ctes {
+			fmt.Printf("CTE: %s -> %s\n", cte.Name, cte.Query)
+		}
+	}
+
+	// Find the main SELECT query (the first SELECT not inside CTE parentheses)
+	// Simple approach: find the last CTE closing paren, then the next SELECT
+	lastCTEEnd := -1
+	for _, cte := range c.ctes {
+		// Find where this CTE ends in the original query
+		cteEndPattern := regexp.MustCompile(regexp.QuoteMeta(cte.Query) + `\s*\)\s*,?\s*`)
+		loc := cteEndPattern.FindStringIndex(sqlQuery)
+		if loc != nil && loc[1] > lastCTEEnd {
+			lastCTEEnd = loc[1]
+		}
+	}
+
+	// Now find the first SELECT after the last CTE
+	mainQueryStart := -1
+	if lastCTEEnd > 0 {
+		remaining := sqlQuery[lastCTEEnd:]
+		selectIndex := strings.Index(strings.ToUpper(remaining), "SELECT")
+		if selectIndex >= 0 {
+			mainQueryStart = lastCTEEnd + selectIndex
+		}
+	}
+
+	if mainQueryStart >= 0 {
+		result := strings.TrimSpace(sqlQuery[mainQueryStart:])
+		if c.options.Verbose {
+			fmt.Printf("Main query: %s\n", result)
+		}
+		return result, nil
+	}
+
+	// Fallback: find any SELECT after WITH
+	withIndex := strings.Index(strings.ToUpper(sqlQuery), "WITH")
+	selectIndex := strings.LastIndex(strings.ToUpper(sqlQuery), "SELECT")
+	if selectIndex > withIndex {
+		result := strings.TrimSpace(sqlQuery[selectIndex:])
+		if c.options.Verbose {
+			fmt.Printf("Main query (fallback): %s\n", result)
+		}
+		return result, nil
+	}
+
+	return "", fmt.Errorf("could not extract main query from WITH clause")
 }
 
 // parseSQL preprocesses and parses the SQL query, returning the SELECT statement
@@ -127,6 +212,298 @@ func (c *Converter) buildPipeline(selectStmt *sqlparser.Select) ([]map[string]in
 	return pipeline, err
 }
 
+// buildCTEPipeline builds the pipeline for a Common Table Expression
+func (c *Converter) buildCTEPipeline(cte CTE) ([]map[string]interface{}, error) {
+	// Check for UNNEST usage in the CTE query
+	if c.hasUnnestFunction(cte.Query) {
+		if c.options.Verbose {
+			fmt.Printf("CTE %s contains UNNEST, using special handling\n", cte.Name)
+		}
+		return c.buildCTEPipelineWithUnnest(cte)
+	}
+
+	if c.options.Verbose {
+		fmt.Printf("CTE %s does not contain UNNEST, using regular pipeline\n", cte.Name)
+	}
+
+	// Parse the CTE query
+	cteStmt, err := sqlparser.Parse(cte.Query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CTE %s: %w", cte.Name, err)
+	}
+
+	cteSelectStmt, ok := cteStmt.(*sqlparser.Select)
+	if !ok {
+		return nil, fmt.Errorf("CTE %s must be a SELECT statement, got: %T", cte.Name, cteStmt)
+	}
+
+	// Build pipeline for the CTE
+	pipeline, err := c.buildPipeline(cteSelectStmt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build pipeline for CTE %s: %w", cte.Name, err)
+	}
+
+	return pipeline, nil
+}
+
+// buildCTEPipelineWithUnnest builds a pipeline for CTEs that use UNNEST
+func (c *Converter) buildCTEPipelineWithUnnest(cte CTE) ([]map[string]interface{}, error) {
+	var pipeline []map[string]interface{}
+
+	if c.options.Verbose {
+		fmt.Printf("Building CTE pipeline with UNNEST for %s\n", cte.Name)
+	}
+
+	// Parse the CTE query to understand the structure
+	cteStmt, err := sqlparser.Parse(cte.Query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CTE %s: %w", cte.Name, err)
+	}
+
+	cteSelectStmt, ok := cteStmt.(*sqlparser.Select)
+	if !ok {
+		return nil, fmt.Errorf("CTE %s must be a SELECT statement, got: %T", cte.Name, cteStmt)
+	}
+
+	// Get the base collection and initial pipeline stages
+	fromCollection, fromPipeline, err := c.buildFromClause(cteSelectStmt.From)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build FROM clause for CTE %s: %w", cte.Name, err)
+	}
+
+	if c.options.Verbose {
+		fmt.Printf("CTE %s from collection: %s, initial stages: %d\n", cte.Name, fromCollection, len(fromPipeline))
+	}
+
+	pipeline = append(pipeline, fromPipeline...)
+
+	// Find UNNEST expressions and add $unwind stages
+	foundUnnest := false
+	if c.options.Verbose {
+		fmt.Printf("CTE %s has %d select expressions\n", cte.Name, len(cteSelectStmt.SelectExprs))
+	}
+	for i, selectExpr := range cteSelectStmt.SelectExprs {
+		if c.options.Verbose {
+			fmt.Printf("Select expr %d: %T - %+v\n", i, selectExpr, selectExpr)
+		}
+		if aliasedExpr, ok := selectExpr.(*sqlparser.AliasedExpr); ok {
+			if c.options.Verbose {
+				fmt.Printf("  Aliased expr: %+v\n", aliasedExpr)
+				fmt.Printf("  Expr type: %T\n", aliasedExpr.Expr)
+			}
+			if funcExpr, ok := aliasedExpr.Expr.(*sqlparser.FuncExpr); ok {
+				if c.options.Verbose {
+					fmt.Printf("  Function: %s\n", funcExpr.Name.String())
+				}
+				if strings.ToUpper(funcExpr.Name.String()) == "UNNEST" {
+					foundUnnest = true
+					if c.options.Verbose {
+						fmt.Printf("Found UNNEST function with %d expressions\n", len(funcExpr.Exprs))
+					}
+					if len(funcExpr.Exprs) == 1 {
+						// Extract the array field from UNNEST argument
+						if c.options.Verbose {
+							fmt.Printf("UNNEST exprs[0] type: %T, value: %+v\n", funcExpr.Exprs[0], funcExpr.Exprs[0])
+						}
+						if aliasedExpr, ok := funcExpr.Exprs[0].(*sqlparser.AliasedExpr); ok {
+							// The UNNEST argument is an AliasedExpr, get its inner expression
+							expr := aliasedExpr.Expr
+							if c.options.Verbose {
+								fmt.Printf("UNNEST inner argument: %T - %+v\n", expr, expr)
+							}
+							arrayField, err := c.extractValue(expr)
+							if err != nil {
+								return nil, fmt.Errorf("failed to extract array field from UNNEST: %w", err)
+							}
+							if c.options.Verbose {
+								fmt.Printf("Extracted array field: %T - %+v\n", arrayField, arrayField)
+							}
+							if arrayFieldStr, ok := arrayField.(string); ok {
+								if c.options.Verbose {
+									fmt.Printf("Adding $unwind for field: %s\n", arrayFieldStr)
+								}
+								unwindStage := map[string]interface{}{
+									"$unwind": map[string]interface{}{
+										"path":                       arrayFieldStr,
+										"preserveNullAndEmptyArrays": false,
+									},
+								}
+								pipeline = append(pipeline, unwindStage)
+
+								// Create project stage for the unwound data
+								alias := aliasedExpr.As.String()
+								if alias == "" {
+									alias = "item" // default alias for UNNEST
+								}
+
+								projectFields := map[string]interface{}{
+									alias: "$" + strings.TrimPrefix(arrayFieldStr, "$"),
+								}
+
+								// Add other select expressions (non-UNNEST)
+								for _, otherSelectExpr := range cteSelectStmt.SelectExprs {
+									if otherAliasedExpr, ok := otherSelectExpr.(*sqlparser.AliasedExpr); ok {
+										if otherFuncExpr, ok := otherAliasedExpr.Expr.(*sqlparser.FuncExpr); !ok || strings.ToUpper(otherFuncExpr.Name.String()) != "UNNEST" {
+											otherAlias := otherAliasedExpr.As.String()
+											if otherAlias == "" {
+												if otherVal, err := c.extractValue(otherAliasedExpr.Expr); err == nil {
+													if otherStr, ok := otherVal.(string); ok {
+														otherAlias = strings.TrimPrefix(otherStr, "$")
+													}
+												}
+											}
+											if otherAlias != "" {
+												projectFields[otherAlias] = "$" + otherAlias
+											}
+										}
+									}
+								}
+
+								projectStage := map[string]interface{}{
+									"$project": projectFields,
+								}
+								pipeline = append(pipeline, projectStage)
+
+								if c.options.Verbose {
+									fmt.Printf("Added $project stage with fields: %+v\n", projectFields)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if !foundUnnest {
+		if c.options.Verbose {
+			fmt.Printf("No UNNEST found in CTE %s, this shouldn't happen\n", cte.Name)
+		}
+	}
+
+	// Handle WHERE clause
+	if cteSelectStmt.Where != nil {
+		whereStage, err := c.BuildMatchStage(cteSelectStmt.Where.Expr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build WHERE clause for CTE %s: %w", cte.Name, err)
+		}
+		if whereStage != nil {
+			pipeline = append(pipeline, whereStage)
+		}
+	}
+
+	// Handle LIMIT
+	if cteSelectStmt.Limit != nil {
+		limitStages, err := c.buildLimitStage(cteSelectStmt.Limit)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build LIMIT clause for CTE %s: %w", cte.Name, err)
+		}
+		pipeline = append(pipeline, limitStages...)
+	}
+
+	if c.options.Verbose {
+		fmt.Printf("CTE %s pipeline completed with %d stages\n", cte.Name, len(pipeline))
+	}
+
+	return pipeline, nil
+}
+
+// hasUnnestFunction checks if a query contains UNNEST functions
+func (c *Converter) hasUnnestFunction(query string) bool {
+	return strings.Contains(strings.ToUpper(query), "UNNEST(")
+}
+
+// parseCTEs manually parses Common Table Expressions from the WITH clause
+func (c *Converter) parseCTEs(sqlQuery string) []CTE {
+	var ctes []CTE
+
+	// Convert to uppercase for case-insensitive matching
+	upperQuery := strings.ToUpper(sqlQuery)
+
+	// Find all "AS (" positions
+	asIndex := strings.Index(upperQuery, " AS (")
+	for asIndex >= 0 {
+		// Find the CTE name (word before "AS")
+		beforeAS := sqlQuery[:asIndex]
+		words := strings.Fields(beforeAS)
+		if len(words) == 0 {
+			break
+		}
+		cteName := words[len(words)-1]
+
+		// Skip "WITH" if it's there
+		if strings.ToUpper(cteName) == "WITH" {
+			asIndex = strings.Index(upperQuery[asIndex+4:], " AS (")
+			if asIndex >= 0 {
+				asIndex += 4 // adjust for the slice
+			}
+			continue
+		}
+
+		// Find the matching closing parenthesis
+		openParenIndex := asIndex + 4 // position of "(" after "AS "
+		if openParenIndex >= len(sqlQuery) || sqlQuery[openParenIndex] != '(' {
+			break
+		}
+
+		closeParenIndex := c.findMatchingParen(sqlQuery, openParenIndex)
+		if closeParenIndex == -1 {
+			break
+		}
+
+		// Extract the CTE query
+		cteQuery := sqlQuery[openParenIndex+1 : closeParenIndex]
+		cteQuery = strings.TrimSpace(cteQuery)
+
+		ctes = append(ctes, CTE{
+			Name:  cteName,
+			Query: cteQuery,
+		})
+
+		// Continue searching for more CTEs
+		remaining := sqlQuery[closeParenIndex+1:]
+		nextASIndex := strings.Index(strings.ToUpper(remaining), " AS (")
+		if nextASIndex >= 0 {
+			asIndex = closeParenIndex + 1 + nextASIndex
+		} else {
+			break
+		}
+	}
+
+	return ctes
+}
+
+// findMatchingParen finds the index of the matching closing parenthesis
+func (c *Converter) findMatchingParen(s string, openIndex int) int {
+	if openIndex >= len(s) || s[openIndex] != '(' {
+		return -1
+	}
+
+	depth := 1
+	for i := openIndex + 1; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// findCTE finds a CTE by name
+func (c *Converter) findCTE(name string) *CTE {
+	for i := range c.ctes {
+		if c.ctes[i].Name == name {
+			return &c.ctes[i]
+		}
+	}
+	return nil
+}
+
 // buildFromClause extracts the collection name and builds JOIN stages from the FROM clause
 func (c *Converter) buildFromClause(from []sqlparser.TableExpr) (string, []map[string]interface{}, error) {
 	if len(from) == 0 {
@@ -140,7 +517,20 @@ func (c *Converter) buildFromClause(from []sqlparser.TableExpr) (string, []map[s
 	switch fromExpr := from[0].(type) {
 	case *sqlparser.AliasedTableExpr:
 		// Simple table reference: FROM table
-		fromCollection = sqlparser.String(fromExpr.Expr)
+		tableName := sqlparser.String(fromExpr.Expr)
+
+		// Check if this is a CTE reference
+		if cte := c.findCTE(tableName); cte != nil {
+			// This is a CTE reference - build the CTE pipeline and use it as a subquery
+			ctePipeline, err := c.buildCTEPipeline(*cte)
+			if err != nil {
+				return "", nil, fmt.Errorf("failed to build CTE pipeline for %s: %w", tableName, err)
+			}
+			pipeline = append(pipeline, ctePipeline...)
+			fromCollection = "" // CTE doesn't have a collection name
+		} else {
+			fromCollection = tableName
+		}
 
 		// Handle additional JOINs
 		if len(from) > 1 {

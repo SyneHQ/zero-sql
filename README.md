@@ -39,6 +39,7 @@ Zero-SQL supports a comprehensive set of SQL features:
 - **SELECT statements** with column selection, aliases, and DISTINCT
 - **Quoted identifiers** (column names with spaces or special characters)
 - **FROM clauses** with table references
+- **WITH clauses** (Common Table Expressions/CTEs) with UNNEST support
 - **JOIN operations** (INNER, LEFT, RIGHT)
 - **WHERE clauses** with complex conditions (AND, OR, nested conditions)
 - **Comparison operators** (=, !=, >, <, >=, <=, LIKE, ILIKE, IN, NOT IN)
@@ -57,6 +58,9 @@ Zero-SQL supports a comprehensive set of SQL features:
 - **SUBSTRING(text, start, length)** / **SUBSTR(text, start, length)** - Extract substring
 - **LENGTH(text)** / **LEN(text)** - Get string length
 - **REPLACE(text, find, replace)** - Replace substrings
+
+### Array Functions
+- **UNNEST(array)** - Expand array elements into separate rows (used in CTEs)
 
 ### Mathematical Functions
 - **ABS(number)** - Absolute value
@@ -331,6 +335,43 @@ Output:
       "category": "$c.name",
       "name": "$u.name",
       "title": "$p.title"
+    }
+  }
+]
+```
+
+##### WITH Clause (Common Table Expressions)
+
+```bash
+zero-sql "WITH order_items AS (SELECT o._id as order_id, UNNEST(o.items) as item FROM orders o LIMIT 1000) SELECT oi.item.product_id, COUNT(*) as times_ordered FROM order_items oi GROUP BY oi.item.product_id"
+```
+
+Output:
+```json
+[
+  {
+    "$unwind": {
+      "path": "$o.items",
+      "preserveNullAndEmptyArrays": false
+    }
+  },
+  {
+    "$project": {
+      "item": "$o.items",
+      "order_id": "$order_id"
+    }
+  },
+  {
+    "$limit": 1000
+  },
+  {
+    "$group": {
+      "_id": {
+        "product_id": "$item.product_id"
+      },
+      "times_ordered": {
+        "$sum": 1
+      }
     }
   }
 ]

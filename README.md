@@ -1,16 +1,19 @@
 # Zero-SQL
 
-A robust go package that converts SQL queries to MongoDB aggregation pipelines with support for complex queries and quoted identifiers.
+A comprehensive SQL-to-MongoDB converter that transforms complex SQL queries into MongoDB aggregation pipelines. Supports 25+ SQL functions, advanced analytics, and full query capabilities.
 
 > Download cli from here <a href='https://github.com/SyneHQ/zero-sql/releases'>Click here</a>
 
 ![ZERO-BANNER](https://c72gdackzgkn7zoa.public.blob.vercel-storage.com/zerosql.png)
 
+**🚀 New: 25+ SQL Functions Supported** - String manipulation, math operations, date functions, and conditional expressions!
+
 ## Features
 
 Zero-SQL supports a comprehensive set of SQL features:
 
-- **SELECT statements** with column selection and aliases
+### Core SQL Features
+- **SELECT statements** with column selection, aliases, and DISTINCT
 - **Quoted identifiers** (column names with spaces or special characters)
 - **FROM clauses** with table references
 - **JOIN operations** (INNER, LEFT, RIGHT)
@@ -20,9 +23,38 @@ Zero-SQL supports a comprehensive set of SQL features:
 - **BETWEEN clauses** with date ranges and numeric ranges
 - **ORDER BY clauses** with ASC/DESC
 - **LIMIT and OFFSET**
-- **GROUP BY** with aggregation functions (COUNT, SUM, AVG, MIN, MAX)
+- **GROUP BY** with aggregation functions (COUNT, SUM, AVG, MIN, MAX, STDDEV, VARIANCE)
 - **HAVING clauses**
 - **Case-insensitive pattern matching** with ILIKE
+
+### String Functions
+- **UPPER(text)** - Convert text to uppercase
+- **LOWER(text)** - Convert text to lowercase
+- **CONCAT(str1, str2, ...)** - Concatenate strings
+- **SUBSTRING(text, start, length)** / **SUBSTR(text, start, length)** - Extract substring
+- **LENGTH(text)** / **LEN(text)** - Get string length
+- **REPLACE(text, find, replace)** - Replace substrings
+
+### Mathematical Functions
+- **ABS(number)** - Absolute value
+- **CEIL(number)** - Ceiling (round up)
+- **FLOOR(number)** - Floor (round down)
+- **POWER(base, exponent)** / **POW(base, exponent)** - Power function
+- **SQRT(number)** - Square root
+- **MOD(dividend, divisor)** - Modulo operation
+
+### Date/Time Functions
+- **YEAR(date)** - Extract year from date
+- **MONTH(date)** - Extract month from date
+- **DAY(date)** - Extract day of month from date
+- **DATEADD(date, interval, unit)** - Add time interval to date
+- **DATEDIFF(end_date, start_date, unit)** - Calculate date difference
+- **STRFTIME(date, format)** - Format date using strftime patterns
+
+### Conditional Functions
+- **COALESCE(val1, val2, ...)** - Return first non-null value
+- **NULLIF(expr1, expr2)** - Return null if expressions are equal
+- **ROUND(value, decimals)** - Round numeric values
 
 ## Installation
 
@@ -116,10 +148,10 @@ Output:
 ]
 ```
 
-#### Complex Investment Analysis Example
+#### Complex E-commerce Analytics Example
 
 ```bash
-zero-sql 'SELECT _id, "Date", "Description", "Operation", SUM("Amount") AS Total_Amount, COUNT(_id) AS Investment_Count, AVG("Amount") AS Average_Investment_Amount FROM investments WHERE "Date" BETWEEN '\''2023-01-01'\'' AND '\''2023-12-31'\'' AND "Operation" IN ('\''Deposit'\'', '\''Withdrawal'\'') GROUP BY _id, "Date", "Description", "Operation" ORDER BY Total_Amount DESC LIMIT 50;'
+zero-sql 'SELECT YEAR("Order Date") as order_year, MONTH("Order Date") as order_month, UPPER("Category") as category_upper, COUNT(*) as total_orders, ROUND(SUM("Total Amount"), 2) as revenue, ROUND(AVG("Total Amount"), 2) as avg_order_value, CONCAT('\''$'\'', ROUND(SUM("Total Amount"), 0)) as formatted_revenue FROM orders WHERE "Order Date" BETWEEN '\''2023-01-01'\'' AND '\''2023-12-31'\'' AND "Status" IN ('\''completed'\'', '\''shipped'\'') GROUP BY YEAR("Order Date"), MONTH("Order Date"), "Category" ORDER BY revenue DESC LIMIT 20;'
 ```
 
 Output:
@@ -129,14 +161,14 @@ Output:
     "$match": {
       "$and": [
         {
-          "Date": {
+          "Order Date": {
             "$gte": "2023-01-01",
             "$lte": "2023-12-31"
           }
         },
         {
-          "Operation": {
-            "$in": ["Deposit", "Withdrawal"]
+          "Status": {
+            "$in": ["completed", "shipped"]
           }
         }
       ]
@@ -144,26 +176,33 @@ Output:
   },
   {
     "$group": {
-      "Average_Investment_Amount": {"$avg": "$Amount"},
-      "Investment_Count": {
-        "$sum": {
-          "$cond": [{"$ne": ["$_id", null]}, 1, 0]
-        }
-      },
-      "Total_Amount": {"$sum": "$Amount"},
       "_id": {
-        "Date": "$Date",
-        "Description": "$Description", 
-        "Operation": "$Operation",
-        "_id": "$_id"
-      }
+        "category": "$Category",
+        "group_0": {"$year": "$Order Date"},
+        "group_1": {"$month": "$Order Date"}
+      },
+      "avg_order_value": {"$avg": "$Total Amount"},
+      "revenue": {"$sum": "$Total Amount"},
+      "total_orders": {"$sum": 1}
     }
   },
   {
-    "$sort": {"Total_Amount": -1}
+    "$project": {
+      "_id": 0,
+      "avg_order_value": {"$round": ["$avg_order_value", 2]},
+      "category_upper": {"$toUpper": "$_id.category"},
+      "formatted_revenue": {"$concat": ["$", {"$round": ["$revenue", 0]}]},
+      "order_month": "$_id.group_1",
+      "order_year": "$_id.group_0",
+      "revenue": {"$round": ["$revenue", 2]},
+      "total_orders": "$total_orders"
+    }
   },
   {
-    "$limit": 50
+    "$sort": {"revenue": -1}
+  },
+  {
+    "$limit": 20
   }
 ]
 ```
@@ -358,14 +397,90 @@ Output:
 zero-sql "SELECT name, created_at FROM users ORDER BY created_at DESC LIMIT 10"
 ```
 
+#### String Functions
+
+```bash
+# Convert case and concatenate names
+zero-sql "SELECT UPPER(name), LOWER(email), CONCAT(first_name, ' ', last_name) as full_name FROM users"
+
+# Extract substrings and get lengths
+zero-sql "SELECT SUBSTRING(name, 1, 10) as short_name, LENGTH(description) as desc_length FROM products"
+
+# Replace text in strings
+zero-sql "SELECT REPLACE(description, 'old', 'new') as updated_desc FROM products"
+```
+
+#### Mathematical Functions
+
+```bash
+# Round prices and calculate absolute values
+zero-sql "SELECT CEIL(price), FLOOR(discount), ABS(amount) FROM orders"
+
+# Power and square root calculations
+zero-sql "SELECT POWER(quantity, 2), SQRT(price), MOD(total, 100) FROM products"
+```
+
+#### Date Functions
+
+```bash
+# Extract date components
+zero-sql "SELECT YEAR(created_at), MONTH(created_at), DAY(created_at) FROM orders"
+
+# Date arithmetic
+zero-sql "SELECT DATEADD(created_at, 30, 'day') as due_date FROM invoices"
+
+# Date formatting with STRFTIME
+zero-sql "SELECT STRFTIME(created_at, '%Y-%m-%d') as date_formatted FROM orders"
+```
+
+#### Conditional Functions
+
+```bash
+# Handle null values
+zero-sql "SELECT COALESCE(nickname, first_name, 'Unknown') as display_name FROM users"
+
+# Null comparisons
+zero-sql "SELECT NULLIF(amount, 0) as valid_amount FROM transactions"
+
+# Rounding with precision
+zero-sql "SELECT ROUND(price, 2), ROUND(SUM(amount), 2) as total FROM orders GROUP BY category"
+```
+
+#### DISTINCT Queries
+
+```bash
+# Get unique categories
+zero-sql "SELECT DISTINCT category, status FROM products"
+
+# Count distinct values
+zero-sql "SELECT COUNT(DISTINCT category) as unique_categories FROM products"
+```
+
 ## Supported SQL Features
 
-### SELECT Clause
+### Core SQL Syntax
+- **SELECT Clause**: Column selection, aliases, DISTINCT, aggregation functions
+- **FROM Clause**: Table references with aliases and quoted identifiers
+- **JOIN Clause**: INNER, LEFT, RIGHT joins with complex conditions
+- **WHERE Clause**: Comparison operators, pattern matching, NULL checks, ranges
+- **GROUP BY Clause**: Single/multiple columns with aggregation functions
+- **HAVING Clause**: Filter aggregated results
+- **ORDER BY Clause**: Ascending/descending with aliases and expressions
+- **LIMIT/OFFSET**: Result pagination
+
+### Function Categories
+
+#### SELECT Clause
 - Column selection: `SELECT name, age`
 - Wildcard: `SELECT *`
+- DISTINCT: `SELECT DISTINCT category, status`
 - Column aliases: `SELECT name AS full_name`
 - Quoted identifiers: `SELECT "User Name", "Email Address"`
 - Aggregation functions: `COUNT()`, `SUM()`, `AVG()`, `MIN()`, `MAX()`
+- String functions: `UPPER()`, `LOWER()`, `CONCAT()`, `SUBSTRING()`, `LENGTH()`, `REPLACE()`
+- Math functions: `ABS()`, `CEIL()`, `FLOOR()`, `POWER()`, `SQRT()`, `MOD()`, `ROUND()`
+- Date functions: `YEAR()`, `MONTH()`, `DAY()`, `DATEADD()`, `DATEDIFF()`, `STRFTIME()`
+- Conditional functions: `COALESCE()`, `NULLIF()`
 
 ### FROM Clause
 - Table references: `FROM users`
@@ -438,6 +553,21 @@ Zero-SQL handles sophisticated business intelligence queries with:
 - GROUP BY with multiple columns including quoted identifiers
 - ORDER BY with computed column aliases
 - Proper handling of date ranges and IN clauses
+- String manipulation and formatting functions
+- Mathematical computations and rounding
+- Date extraction and arithmetic operations
+- Conditional expressions and null handling
+
+### Function Support
+
+Zero-SQL now supports 25+ SQL functions for comprehensive data transformation:
+
+**String Functions**: UPPER, LOWER, CONCAT, SUBSTRING, LENGTH, REPLACE
+**Math Functions**: ABS, CEIL, FLOOR, POWER, SQRT, MOD, ROUND
+**Date Functions**: YEAR, MONTH, DAY, DATEADD, DATEDIFF, STRFTIME
+**Conditional Functions**: COALESCE, NULLIF
+
+These functions can be used in SELECT, WHERE, GROUP BY, HAVING, and ORDER BY clauses, enabling complex data transformations and calculations directly in your SQL queries.
 
 ## MongoDB Output
 
@@ -468,11 +598,12 @@ Use the `--verbose` flag for additional debugging information.
 
 Current limitations include:
 
-- Only SELECT statements are supported
+- Only SELECT statements are supported (no INSERT, UPDATE, DELETE)
 - Subqueries are not yet supported
-- Window functions are not supported
-- HAVING clauses with complex function expressions need additional development
-- Some advanced SQL features may not be available
+- Window functions (ROW_NUMBER, RANK, etc.) are not supported
+- UNION operations are not supported
+- CTEs (Common Table Expressions) are not supported
+- Some advanced PostgreSQL-specific features may not be available
 
 ## Contributing
 
@@ -492,14 +623,14 @@ zero-sql/
 │   └── root.go         # Main command setup
 ├── internal/converter/  # Core conversion logic
 │   ├── converter.go    # Main converter with pipeline building
-│   ├── parser.go       # SQL AST parsing helpers with quoted identifier support
+│   ├── parser.go       # SQL AST parsing with 25+ function handlers
 │   └── operators.go    # SQL to MongoDB operator mappings
 ├── main.go             # Application entry point
 ├── go.mod              # Go module definition
 └── README.md           # This file
 ```
 
-The converter package is the heart of the application, handling the conversion from SQL Abstract Syntax Trees (AST) to MongoDB aggregation pipelines. It includes specialized handling for quoted identifiers and complex expression parsing.
+The converter package is the heart of the application, handling the conversion from SQL Abstract Syntax Trees (AST) to MongoDB aggregation pipelines. It includes specialized handling for quoted identifiers, complex expressions, and 25+ SQL functions including string manipulation, mathematical operations, date functions, and conditional expressions.
 
 ## Usage
 
@@ -521,6 +652,15 @@ zero-sql --verbose "SELECT name FROM users"
 
 # Complex aggregation query
 zero-sql 'SELECT "Department", AVG("Salary") as "Average Salary" FROM employees WHERE "Hire Date" > '\''2020-01-01'\'' GROUP BY "Department" ORDER BY "Average Salary" DESC'
+
+# String functions
+zero-sql "SELECT UPPER(name), CONCAT(first_name, ' ', last_name) as full_name FROM users"
+
+# Math and date functions
+zero-sql "SELECT ROUND(price, 2), YEAR(created_at), DATEADD(created_at, 30, 'day') FROM orders"
+
+# DISTINCT queries
+zero-sql "SELECT DISTINCT category, status FROM products ORDER BY category"
 ```
 
 ## Troubleshooting

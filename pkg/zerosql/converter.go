@@ -156,3 +156,22 @@ func (c *Converter) ConvertSQLToMongoWithCollection(sqlQuery string) (*Conversio
 		Pipeline:   pipeline,
 	}, nil
 }
+
+// ConvertReadOnlySQLToMongoWithCollection compiles a bounded, single-collection
+// SELECT without legacy preprocessing. It supports projections, SQL NULL-aware
+// filters, one ORDER BY key, LIMIT/OFFSET and simple numeric grouping/aggregates.
+// JOINs, CTEs, subqueries, UNION, CAST, writes, parameters and statement terminators
+// are rejected. See README for the exact supported subset and resource budgets.
+//
+// Decimal literals use canonical Extended JSON. Marshal each returned stage to
+// JSON and decode it with bson.UnmarshalExtJSON before executing it; ordinary
+// bson.Marshal or float64 JSON maps do not preserve this representation.
+// The caller must enforce authorization, read-only database grants and execution
+// limits. Existing legacy conversion methods are unchanged.
+func (c *Converter) ConvertReadOnlySQLToMongoWithCollection(sqlQuery string) (*ConversionResult, error) {
+	collection, pipeline, err := c.conv.ConvertReadOnlySQLToMongoWithCollection(sqlQuery)
+	if err != nil {
+		return nil, err
+	}
+	return &ConversionResult{Collection: collection, Pipeline: pipeline}, nil
+}

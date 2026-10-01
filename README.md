@@ -785,4 +785,87 @@ zero-sql 'SELECT "User Name" FROM users'
 
 # Incorrect - will be treated as a string literal
 zero-sql "SELECT 'User Name' FROM users"
-``` 
+```
+
+## Restricted read-only MongoDB API
+
+`ConvertReadOnlySQLToMongoWithCollection` is an additive API for gateways that
+need a deliberately bounded SELECT subset. It compiles the raw parser AST without
+legacy regex preprocessing, mutable converter state, or CAST rewriting. Existing
+conversion methods and the CLI retain their previous behavior. The library
+requires Go 1.25 or newer because it uses the official MongoDB v2 BSON package to
+validate exact Decimal128 literals.
+
+```go
+result, err := zerosql.New(nil).ConvertReadOnlySQLToMongoWithCollection(
+    "SELECT region, COUNT(*) AS row_count, SUM(amount) AS total FROM orders GROUP BY region ORDER BY region",
+)
+if err != nil {
+    return err
+}
+// Decimal literals are canonical Extended JSON. Decode each stage through
+// bson.UnmarshalExtJSON, not a float64 JSON map or ordinary bson.Marshal.
+pipeline := make(mongo.Pipeline, 0, len(result.Pipeline))
+for _, stage := range result.Pipeline {
+    encoded, err := json.Marshal(stage)
+    if err != nil { return err }
+    var document bson.D
+    if err := bson.UnmarshalExtJSON(encoded, false, &document); err != nil { return err }
+    pipeline = append(pipeline, document)
+}
+// Execute on the caller-authorized database and collection with read-only
+// credentials, a context deadline, result limits, and server resource policies.
+```
+
+The subset supports:
+
+- One unqualified collection, optional table alias, a sole `*`, column projections,
+  output aliases, and literal projections with explicit aliases. Identifiers are
+  simple ASCII names, up to 120 bytes. Explicitly projected missing fields become
+  BSON null; `SELECT *` retains the source document, including missing fields.
+- `WHERE` comparisons, `AND`, `OR`, `NOT`, `IS NULL`, `IS NOT NULL`, literal
+  `IN`/`NOT IN`, `BETWEEN`/`NOT BETWEEN`, and `LIKE`/`NOT LIKE`. NULL and missing
+  follow SQL three-valued logic. Comparisons require compatible scalar types:
+  numeric pairs, or matching string, Boolean, or BSON date types. Incompatible
+  non-null operands fail at execution instead of using MongoDB's BSON type order.
+- `LIKE` uses case-sensitive, full-string PCRE matching. `%` matches zero or more
+  characters and `_` matches one character, including newlines. Regex punctuation
+  is escaped; backslash escapes a wildcard. Explicit `ESCAPE` and `ILIKE` are not
+  supported. Non-string, non-null operands fail at execution. General string
+  comparison, grouping, and ordering inherit the collection's MongoDB collation;
+  `$regexMatch` does not use that collation.
+- Simple-column `GROUP BY`; `COUNT(*)`, `COUNT(column)`, and numeric-only
+  `SUM`, `AVG`, `MIN`, `MAX`. Non-null nonnumeric aggregate inputs fail explicitly.
+  Numeric aggregates use MongoDB Decimal128 arithmetic, including its finite
+  precision and range. `COUNT(column)` skips null/missing values. An all-null group
+  returns null for each numeric aggregate. An empty global aggregate returns one
+  row with COUNT zero and other aggregates null; grouped empty input returns none.
+- One `ORDER BY` key and nonnegative literal `LIMIT`/`OFFSET`. Aggregate ordering
+  uses a selected output alias. Multiple ordering keys are rejected because the
+  existing map-based pipeline API cannot preserve MongoDB sort-key precedence.
+  Source fields used for sorting/grouping should have a consistent BSON type.
+
+Integer literals must fit signed int64; decimal literals must be exactly
+representable by Decimal128. No SQL literal passes through `float64`. Literal
+strings beginning with `$` are protected by `$literal` and never become field
+references. Outputs preserve BSON types rather than promising a portable SQL
+schema.
+
+The compiler rejects writes/DDL, joins, database-qualified collections, CTEs,
+subqueries, UNION, DISTINCT, HAVING, CAST, arithmetic, arbitrary functions,
+parameters, hints, locking clauses, and statement terminators. A semicolon inside
+a string is ordinary data. Limits are 64 KiB SQL, 4096 tokens/expression nodes,
+64 nesting levels, 128 projections, 16 grouping keys, 128 IN-list items, and
+128 KiB compiled JSON. These limits are cumulative; an expression within an item
+count can still exceed the output budget. The calling gateway must additionally
+bound execution time, pipeline depth, rows, bytes, and memory, authorize the
+selected collection, and use database read-only grants. The converter does not
+execute queries or grant access.
+
+Run `go test ./...` for the legacy and restricted compiler suites, and
+`go test -race ./pkg/zerosql` for shared-converter concurrency checks. The new
+API was also exercised through Kelvo against an official MongoDB 8.0.32 server:
+filtering, aliases, ordering, NULL predicates, literal precision, LIKE,
+grouped/empty/all-null aggregates, and sums larger than int64. These are
+correctness fixtures, not throughput measurements or a claim of support for
+all older MongoDB releases.

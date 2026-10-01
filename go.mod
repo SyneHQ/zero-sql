@@ -1,6 +1,6 @@
 module github.com/synehq/zero-sql
 
-go 1.21
+go 1.25.0
 
 // ZeroSQL converts SQL queries to MongoDB aggregation pipelines
 // See: https://github.com/synehq/zero-sql
@@ -9,6 +9,7 @@ require (
 	github.com/spf13/cobra v1.8.0
 	github.com/stretchr/testify v1.10.0
 	github.com/xwb1989/sqlparser v0.0.0-20180606152119-120387863bf2
+	go.mongodb.org/mongo-driver/v2 v2.9.1
 )
 
 require (
